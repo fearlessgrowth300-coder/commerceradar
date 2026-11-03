@@ -1,0 +1,26 @@
+[project]
+name = "commerceradar-api"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi==0.120.0",
+  "uvicorn[standard]==0.38.0",
+  "pydantic-settings==2.11.0",
+  "sqlalchemy==2.0.44",
+  "alembic==1.17.0",
+  "psycopg[binary]==3.2.12",
+  "celery[redis]==5.5.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.4.2", "httpx==0.28.1"]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
