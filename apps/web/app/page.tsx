@@ -1,9 +1,10 @@
 // Server component: talks to the API (never the DB). API_URL is the internal address (http://api:8000 in docker).
+import { API_URL, getJson } from "@/lib/api";
+
 export const dynamic = "force-dynamic";
 
-const API_URL = process.env.API_URL ?? "http://localhost:8000";
-
 type Health = { status: string; checks: Record<string, string> };
+
 type Overview = {
   candidate_domains: number;
   verified_stores: number;
@@ -12,15 +13,6 @@ type Overview = {
   discovery_runs: number;
   failed_jobs: number;
 };
-
-async function getJson<T>(path: string): Promise<T | null> {
-  try {
-    const res = await fetch(`${API_URL}${path}`, { cache: "no-store" });
-    return res.ok || res.status === 503 ? ((await res.json()) as T) : null;
-  } catch {
-    return null;
-  }
-}
 
 const LABELS: [keyof Overview, string][] = [
   ["candidate_domains", "Candidate domains"],
@@ -74,7 +66,7 @@ export default async function Dashboard() {
           <p className="text-sm text-slate-500">No data available.</p>
         )}
         {overview && overview.candidate_domains === 0 && (
-          <p className="mt-3 text-sm text-slate-500">No domains yet. Manual domain submission arrives in Milestone 2.</p>
+          <p className="mt-3 text-sm text-slate-500">No domains yet. Submit one on the Discovery page.</p>
         )}
       </section>
     </div>

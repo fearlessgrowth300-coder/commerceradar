@@ -104,6 +104,10 @@ class Domain(Base):
     first_seen_at: Mapped[datetime] = _ts(index=True)
     last_seen_at: Mapped[datetime] = _ts()
     current_resolution_status: Mapped[str | None] = mapped_column(String(20))
+    # Latest verification outcome; full evidence per check lives in crawl_jobs.result.
+    verification_status: Mapped[str] = mapped_column(String(30), default="pending", server_default="pending", index=True)
+    verification_confidence: Mapped[float | None] = mapped_column(Float)
+    last_checked_at: Mapped[datetime | None] = _opt_ts(index=True)
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = _updated()
 
@@ -169,6 +173,7 @@ class CrawlJob(Base):
     __tablename__ = "crawl_jobs"
     __table_args__ = (Index("ix_crawl_jobs_status_scheduled", "status", "scheduled_at"),)
     id: Mapped[uuid.UUID] = _pk()
+    domain_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("domains.id"), index=True)
     target_domain: Mapped[str] = mapped_column(String(253), index=True)
     job_type: Mapped[str] = mapped_column(String(50))
     status: Mapped[str] = mapped_column(String(20), default="queued")
@@ -178,6 +183,7 @@ class CrawlJob(Base):
     started_at: Mapped[datetime | None] = _opt_ts()
     completed_at: Mapped[datetime | None] = _opt_ts()
     error_message: Mapped[str | None] = mapped_column(Text)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONType)  # classification + evidence
 
 
 class CrawlPolicy(Base):

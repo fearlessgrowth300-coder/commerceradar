@@ -10,10 +10,12 @@ dependencies = [
   "alembic==1.17.0",
   "psycopg[binary]==3.2.12",
   "celery[redis]==5.5.3",
+  "httpx==0.28.1",
+  "selectolax==0.3.21",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==8.4.2", "httpx==0.28.1"]
+dev = ["pytest==8.4.2"]
 
 [build-system]
 requires = ["setuptools>=75"]
