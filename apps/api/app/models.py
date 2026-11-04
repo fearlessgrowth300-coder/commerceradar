@@ -69,6 +69,10 @@ class DiscoverySource(Base):
     source_type: Mapped[str] = mapped_column(String(50))
     configuration: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Source-rights quarantine (M11): records found only by a restricted source are kept (provenance)
+    # but excluded from customer-facing views, exports and commercial intelligence.
+    restricted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    restriction_reason: Mapped[str | None] = mapped_column(String(300))
     # Incremental progress that outlives a single run (e.g. highest crt.sh id seen per query).
     state: Mapped[dict[str, Any] | None] = mapped_column(JSONType, default=dict)
     created_at: Mapped[datetime] = _ts()
@@ -425,13 +429,27 @@ class BenchmarkLabel(Base):
     __tablename__ = "benchmark_labels"
     id: Mapped[uuid.UUID] = _pk()
     domain: Mapped[str] = mapped_column(String(253), unique=True)
-    is_ecommerce: Mapped[bool] = mapped_column(Boolean)
+    is_ecommerce: Mapped[bool | None] = mapped_column(Boolean)  # None for inaccessible / uncertain human labels
+    label: Mapped[str | None] = mapped_column(String(30))  # store | not_store | inactive_storefront | inaccessible | uncertain
     platform: Mapped[str | None] = mapped_column(String(30))
     label_source: Mapped[str] = mapped_column(String(30), index=True)  # vendor_showcase | human_sample | known_* | hard_case
     labeller: Mapped[str | None] = mapped_column(String(100))
     split: Mapped[str] = mapped_column(String(10), index=True)  # tune | holdout (fixed by hash of the domain)
     notes: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = _ts()
+    labelled_at: Mapped[datetime | None] = _opt_ts()
+
+
+class BenchmarkEvaluation(Base):
+    """Every look at the HOLDOUT split is recorded, so tuning against it is visible (M11)."""
+
+    __tablename__ = "benchmark_evaluations"
+    id: Mapped[uuid.UUID] = _pk()
+    split: Mapped[str] = mapped_column(String(10), index=True)
+    requested_by: Mapped[str | None] = mapped_column(String(320))
+    labels: Mapped[int] = mapped_column(Integer)
+    summary: Mapped[dict[str, Any] | None] = mapped_column(JSONType)
+    created_at: Mapped[datetime] = _ts(index=True)
 
 
 class BenchmarkQueue(Base):

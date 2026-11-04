@@ -167,6 +167,8 @@ def _active(db: Session, source_id: uuid.UUID) -> bool:
 
 
 def launch_run(db: Session, source: DiscoverySource, enqueue: Callable) -> DiscoveryRun:
+    if source.restricted:
+        raise RunConflict(f"source is restricted: {source.restriction_reason or 'usage rights not cleared'}")
     if not source.enabled:
         raise RunConflict("source is disabled")
     run = start_run(db, source)

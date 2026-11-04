@@ -28,7 +28,8 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--label-source", required=True)
     b.add_argument("--labeller", required=True)
     b = sub.add_parser("benchmark-eval", help="precision/recall on a split (default: holdout)")
-    b.add_argument("--split", default="holdout", choices=("tune", "holdout"))
+    b.add_argument("--split", default="tune", choices=("tune", "holdout"))
+    b.add_argument("--final", action="store_true", help="required for --split holdout (each holdout look is logged)")
     b.add_argument("--live", action="store_true", help="re-verify labelled domains now instead of using stored verdicts")
     b = sub.add_parser("benchmark-queue", help="fill the blind labelling queue (stratified, default 200)")
     b.add_argument("--batch", default="m11-1")
@@ -62,7 +63,15 @@ def main(argv: list[str] | None = None) -> int:
 
         from app.services import benchmark
 
+        if args.split == "holdout" and not args.final:
+            print("refusing: holdout figures are for the final report only; add --final (the look is logged)", file=sys.stderr)
+            return 2
         with SessionLocal() as db:
+            if args.split == "holdout":
+                from app.models import BenchmarkEvaluation
+
+                db.add(BenchmarkEvaluation(split="holdout", requested_by="cli", labels=0))
+                db.commit()
             preds = _live_predictions(db, args.split) if args.live else None
             print(json.dumps(benchmark.evaluate(db, args.split, preds), indent=2, default=str))
     elif args.cmd == "benchmark-queue":

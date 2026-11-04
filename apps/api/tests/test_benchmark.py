@@ -96,9 +96,13 @@ def test_queue_is_stratified_blind_and_records_labels(db, client):
     assert client.post("/api/v1/admin/benchmark/label", json={"domain": "nope.example", "verdict": "store"}).status_code == 422
     assert client.post("/api/v1/admin/benchmark/label", json={"domain": dom, "verdict": "maybe"}).status_code == 422
     other = db.scalars(select(BenchmarkQueue).where(BenchmarkQueue.batch == f"t-{tag}", BenchmarkQueue.status == "open")).first()
-    client.post("/api/v1/admin/benchmark/label", json={"domain": other.domain, "verdict": "cannot_tell"})
+    assert client.post("/api/v1/admin/benchmark/label", json={"domain": other.domain, "verdict": "inaccessible"}).status_code == 200
     db.refresh(other)
-    assert other.status == "cannot_tell"
-    assert db.scalar(select(BenchmarkLabel).where(BenchmarkLabel.domain == other.domain)) is None  # no label invented
+    lb2 = db.scalar(select(BenchmarkLabel).where(BenchmarkLabel.domain == other.domain))
+    assert other.status == "labelled" and lb2.label == "inaccessible" and lb2.is_ecommerce is None  # not guessed
+    assert lb2.labelled_at is not None and lb2.split == benchmark.split_for(other.domain)
     rep = client.get("/api/v1/admin/benchmark/report").json()
-    assert {"progress", "holdout", "tune"} <= set(rep)
+    assert "tune" in rep and isinstance(rep["holdout"], str)  # holdout hidden unless final
+    before = rep["holdout_evaluations_so_far"]
+    final = client.get("/api/v1/admin/benchmark/report", params={"final": True}).json()
+    assert isinstance(final["holdout"], dict) and final["holdout_evaluations_so_far"] == before + 1  # every look logged

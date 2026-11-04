@@ -275,7 +275,7 @@ def admin_metrics(db: Session = Depends(get_db)):
 
 class LabelIn(BaseModel):
     domain: str = Field(max_length=253)
-    verdict: str = Field(pattern="^(store|not_store|cannot_tell)$")
+    verdict: str = Field(pattern="^(store|not_store|inactive_storefront|inaccessible|uncertain)$")
     platform: str | None = Field(None, max_length=30)
     notes: str = Field("", max_length=500)
 
@@ -297,6 +297,14 @@ def benchmark_label(body: LabelIn, ctx: Ctx = Depends(admin), db: Session = Depe
     return {"progress": benchmark.progress(db)}
 
 
-@router.get("/admin/benchmark/report", dependencies=[Depends(admin)])
-def benchmark_report(db: Session = Depends(get_db)):
-    return benchmark.report(db)
+@router.get("/admin/benchmark/report")
+def benchmark_report(final: bool = False, ctx: Ctx = Depends(admin), db: Session = Depends(get_db)):
+    """Tune split always; holdout only with ?final=true (logged)."""
+    return benchmark.report(db, final=final, requested_by=ctx.user.email)
+
+
+@router.get("/admin/source-rights", dependencies=[Depends(admin)])
+def source_rights(db: Session = Depends(get_db)):
+    from app.services import provenance
+
+    return provenance.summary(db)

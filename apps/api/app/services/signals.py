@@ -189,7 +189,8 @@ def _log(db: Session, store: Store, kind: str, data: dict, now: datetime) -> Non
     db.add(StoreObservation(store_id=store.id, observation_type=kind, observation_data=data, observed_at=now))
 
 
-def list_signals(db: Session, signal_type: str | None, category: str | None, active: bool, page: int, page_size: int):
+def list_signals(db: Session, signal_type: str | None, category: str | None, active: bool, page: int, page_size: int,
+                 include_restricted: bool = False):  # fmt: skip
     from app.models import Domain
 
     q = (
@@ -198,6 +199,10 @@ def list_signals(db: Session, signal_type: str | None, category: str | None, act
         .join(Domain, Domain.id == Store.domain_id)
         .where(StoreSignal.active.is_(active), Domain.suppressed_at.is_(None), Store.merged_into_store_id.is_(None))
     )
+    if not include_restricted:
+        from app.services import provenance
+
+        q = q.where(~provenance.restricted_store_clause())
     if signal_type:
         q = q.where(StoreSignal.signal_type == signal_type)
     if category:

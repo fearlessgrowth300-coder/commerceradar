@@ -7,10 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from app.api.deps import admin, current
+from app.api.deps import Ctx, admin, current
 from app.db import get_db
 from app.models import CrawlJob, DiscoveryRun, DiscoverySource, Product, Store
-from app.services import dashboard, discovery, domains, monitoring, products, signals, stores
+from app.services import dashboard, discovery, domains, monitoring, products, provenance, signals, stores
 
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(current)])  # every route needs a session
 
@@ -160,8 +160,8 @@ def _enqueue(job_id: uuid.UUID) -> None:
 
 
 @router.get("/dashboard/overview", response_model=Overview)
-def dashboard_overview(db: Session = Depends(get_db)):
-    return dashboard.overview(db)
+def dashboard_overview(db: Session = Depends(get_db), ctx: Ctx = Depends(current)):
+    return dashboard.overview(db, include_restricted=ctx.user.is_admin)
 
 
 @router.post("/discovery/domains", response_model=SubmitOut, status_code=202, dependencies=[Depends(admin)])
@@ -280,17 +280,18 @@ def list_store_products(
     status: str | None = Query(None, pattern="^(active|removed)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
+    ctx: Ctx = Depends(current),
 ):
-    if not stores.visible_store(db, store_id):
+    if not stores.visible_store(db, store_id, include_restricted=ctx.user.is_admin):
         raise HTTPException(404, "store not found")
     items, total = products.list_products(db, store_id, status, page, page_size)
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/products/{product_id}", response_model=ProductDetail)
-def get_product(product_id: uuid.UUID, db: Session = Depends(get_db)):
+def get_product(product_id: uuid.UUID, db: Session = Depends(get_db), ctx: Ctx = Depends(current)):
     product = db.get(Product, product_id)
-    if not product or not stores.visible_store(db, product.store_id):
+    if not product or not stores.visible_store(db, product.store_id, include_restricted=ctx.user.is_admin):
         raise HTTPException(404, "product not found")
     return {"product": product, "history": products.product_history(db, product_id)}
 
@@ -329,6 +330,7 @@ class StoreRow(BaseModel):
     first_verified_at: datetime | None
     last_verified_at: datetime | None
     product_count: int
+    restricted: bool = False
 
 
 class StorePage(BaseModel):
@@ -387,6 +389,7 @@ class StoreDetailOut(BaseModel):
     domain_id: uuid.UUID
     domain_first_seen_at: datetime
     product_count: int
+    restricted: bool = False  # admins only ever see True: found only by a source whose usage rights are not cleared
     first_certificate_observed_at: datetime | None = None  # CT evidence; not a launch date
     domains: list[dict[str, Any]] = []
     detections: list[DetectionOut]
@@ -453,18 +456,25 @@ def list_stores(
     sort: str = Query("newest", pattern="^(newest|oldest|last_verified|name|products)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
+    ctx: Ctx = Depends(current),
 ):
     _store_filters(platform, activity, signal)
+    admin_view = ctx.user.is_admin
     rows, total = stores.list_stores(
         db, q=q, platform=platform, activity=activity, ecommerce_status=ecommerce_status, signal=signal,
         verified_from=verified_from, verified_to=verified_to, sort=sort, page=page, page_size=page_size,
+        include_restricted=admin_view,
     )  # fmt: skip
-    return {"items": _store_rows(rows), "total": total, "page": page, "page_size": page_size}
+    items = _store_rows(rows)
+    flagged = provenance.restricted_ids(db, [r["id"] for r in items]) if admin_view else set()
+    for r in items:
+        r["restricted"] = r["id"] in flagged
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/stores/{store_id}", response_model=StoreDetailOut)
-def get_store(store_id: uuid.UUID, db: Session = Depends(get_db)):
-    found = stores.store_detail(db, store_id)
+def get_store(store_id: uuid.UUID, db: Session = Depends(get_db), ctx: Ctx = Depends(current)):
+    found = stores.store_detail(db, store_id, include_restricted=ctx.user.is_admin)
     if not found:
         raise HTTPException(404, "store not found")
     return found
@@ -477,16 +487,17 @@ def store_observations(
     type: str | None = Query(None, max_length=50),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
+    ctx: Ctx = Depends(current),
 ):
-    if not stores.visible_store(db, store_id):
+    if not stores.visible_store(db, store_id, include_restricted=ctx.user.is_admin):
         raise HTTPException(404, "store not found")
     items, total = stores.observations(db, store_id, type, page, page_size)
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/platforms")
-def platform_distribution(db: Session = Depends(get_db)):
-    return stores.platform_distribution(db)
+def platform_distribution(db: Session = Depends(get_db), ctx: Ctx = Depends(current)):
+    return stores.platform_distribution(db, include_restricted=ctx.user.is_admin)
 
 
 @router.get("/signals", response_model=SignalPage)
@@ -497,10 +508,11 @@ def list_signals(
     active: bool = True,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
+    ctx: Ctx = Depends(current),
 ):
     if type and type not in signals.SIGNAL_TYPES:
         raise HTTPException(422, f"type must be one of {', '.join(signals.SIGNAL_TYPES)}")
-    rows, total = signals.list_signals(db, type, category, active, page, page_size)
+    rows, total = signals.list_signals(db, type, category, active, page, page_size, include_restricted=ctx.user.is_admin)
     items = [
         {**SignalOut.model_validate(sg).model_dump(), "store_id": sg.store_id, "domain": dom, "store_name": name}
         for sg, dom, name in rows
@@ -515,11 +527,12 @@ def signal_types(db: Session = Depends(get_db)):
 
 
 @router.get("/dashboard/activity")
-def dashboard_activity(db: Session = Depends(get_db)):
+def dashboard_activity(db: Session = Depends(get_db), ctx: Ctx = Depends(current)):
+    adm = ctx.user.is_admin
     return {
-        "platforms": stores.platform_distribution(db),
+        "platforms": stores.platform_distribution(db, include_restricted=adm),
         "recent_runs": [RunOut.model_validate(r).model_dump() for r in discovery.list_runs(db, None, 5)],
-        "recent_changes": stores.recent_changes(db),
+        "recent_changes": stores.recent_changes(db, include_restricted=adm),
         "signals": signals.counts(db),
     }
 

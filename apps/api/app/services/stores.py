@@ -3,9 +3,10 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, true
 from sqlalchemy.orm import Session
 
+from app.services import provenance
 from app.models import DiscoveredUrl, DiscoverySource, Domain, PlatformDetection, Product, Store, StoreObservation, StoreSignal
 
 SORTS = {
@@ -30,6 +31,7 @@ def list_stores(
     sort: str = "newest",
     page: int = 1,
     page_size: int = 50,
+    include_restricted: bool = False,
 ):
     products = func.count(Product.id).label("product_count")
     stmt = (
@@ -39,6 +41,8 @@ def list_stores(
         .where(Domain.suppressed_at.is_(None), Store.merged_into_store_id.is_(None))
         .group_by(Store.id, Domain.normalized_domain)
     )
+    if not include_restricted:
+        stmt = stmt.where(~provenance.restricted_store_clause())
     if q:
         needle = q.strip().lower()
         stmt = stmt.where(
@@ -66,9 +70,12 @@ def list_stores(
     return rows, total
 
 
-def store_detail(db: Session, store_id: uuid.UUID):
+def store_detail(db: Session, store_id: uuid.UUID, include_restricted: bool = False):
     store = db.get(Store, store_id)
     if store is None:
+        return None
+    restricted = provenance.is_restricted(db, store.id)
+    if restricted and not include_restricted:
         return None
     domain = db.get(Domain, store.domain_id)
     if domain.suppressed_at is not None or store.merged_into_store_id is not None:
@@ -102,6 +109,7 @@ def store_detail(db: Session, store_id: uuid.UUID):
     )
     return {
         "first_certificate_observed_at": first_cert,
+        "restricted": restricted,
         "store": store,
         "domain": domain.normalized_domain,
         "domain_id": domain.id,
@@ -129,25 +137,27 @@ def observations(db: Session, store_id: uuid.UUID, kind: str | None, page: int, 
     return items, total
 
 
-def platform_distribution(db: Session) -> list[dict]:
+def platform_distribution(db: Session, include_restricted: bool = False) -> list[dict]:
     q = (
         select(Store.primary_platform, func.count())
         .join(Domain, Domain.id == Store.domain_id)
         .where(Store.ecommerce_status.in_(("confirmed_ecommerce", "probable_ecommerce")), Domain.suppressed_at.is_(None),
                Store.merged_into_store_id.is_(None))
+        .where(true() if include_restricted else ~provenance.restricted_store_clause())
         .group_by(Store.primary_platform)
         .order_by(func.count().desc())
     )
     return [{"platform": p, "stores": n} for p, n in db.execute(q).all()]
 
 
-def recent_changes(db: Session, limit: int = 15) -> list[dict]:
+def recent_changes(db: Session, limit: int = 15, include_restricted: bool = False) -> list[dict]:
     kinds = ("activity_change", "platform_change", "signal_detected", "signal_resolved")
     q = (
         select(StoreObservation, Domain.normalized_domain)
         .join(Store, Store.id == StoreObservation.store_id)
         .join(Domain, Domain.id == Store.domain_id)
         .where(StoreObservation.observation_type.in_(kinds), Domain.suppressed_at.is_(None))
+        .where(true() if include_restricted else ~provenance.restricted_store_clause())
         .order_by(StoreObservation.observed_at.desc())
         .limit(limit)
     )
@@ -157,11 +167,13 @@ def recent_changes(db: Session, limit: int = 15) -> list[dict]:
     ]
 
 
-def visible_store(db: Session, store_id: uuid.UUID) -> Store | None:
+def visible_store(db: Session, store_id: uuid.UUID, include_restricted: bool = False) -> Store | None:
     """The store, unless it does not exist or its domain opted out."""
     store = db.get(Store, store_id)
     if store is None:
         return None
     if store.merged_into_store_id is not None:
+        return None
+    if not include_restricted and provenance.is_restricted(db, store.id):
         return None
     return None if db.scalar(select(Domain.suppressed_at).where(Domain.id == store.domain_id)) else store

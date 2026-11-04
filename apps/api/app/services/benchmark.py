@@ -91,10 +91,12 @@ def import_csv(db: Session, text: str, label_source: str, labeller: str) -> dict
         existing = db.scalar(select(BenchmarkLabel).where(BenchmarkLabel.domain == dom))
         if existing:
             existing.is_ecommerce, existing.platform = is_ecom, platform if is_ecom else None
+            existing.label = "store" if is_ecom else "not_store"
             existing.label_source, existing.labeller, existing.notes = label_source, labeller, (row.get("notes") or "")[:500]
             updated += 1
         else:
-            db.add(BenchmarkLabel(domain=dom, is_ecommerce=is_ecom, platform=platform if is_ecom else None,
+            db.add(BenchmarkLabel(domain=dom, is_ecommerce=is_ecom, label="store" if is_ecom else "not_store",
+                                  platform=platform if is_ecom else None,
                                   label_source=label_source, labeller=labeller, split=split_for(dom),
                                   notes=(row.get("notes") or "")[:500]))  # fmt: skip
             added += 1
@@ -129,6 +131,11 @@ def evaluate(db: Session, split: str = "holdout", predictions: dict[str, tuple[s
     per_source: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     plat_total: dict[str, int] = defaultdict(int)
     plat_right: dict[str, int] = defaultdict(int)
+    human_abstained = sum(lb.is_ecommerce is None for lb in labels)
+    inactive_agree = sum(1 for lb in labels if lb.label == "inactive_storefront"
+                         and predictions.get(lb.domain, ("", None))[0] == "inactive_storefront")  # fmt: skip
+    inactive_total = sum(lb.label == "inactive_storefront" for lb in labels)
+    labels = [lb for lb in labels if lb.is_ecommerce is not None]
     for lb in labels:
         status, platform = predictions.get(lb.domain, ("pending", None))
         src = sources.get(lb.domain, "not in database")
@@ -157,6 +164,8 @@ def evaluate(db: Session, split: str = "holdout", predictions: dict[str, tuple[s
         "labels": len(labels),
         "decided": decided,
         "abstained": {"labelled_positive": abstain_pos, "labelled_negative": abstain_neg},
+        "human_could_not_judge": human_abstained,
+        "inactive_storefront_agreement": _rate(inactive_agree, inactive_total),
         "confusion": {"tp": tp, "fp": fp, "tn": tn, "fn": fn},
         "precision": _rate(tp, tp + fp),
         "recall_decided": _rate(tp, tp + fn),
@@ -246,27 +255,35 @@ def next_item(db: Session) -> BenchmarkQueue | None:
     return sorted(open_, key=lambda q: hashlib.sha256(q.domain.encode()).hexdigest())[0]
 
 
+VERDICTS = {  # human label -> is_ecommerce (None = the human could not judge; excluded from precision/recall)
+    "store": True,
+    "not_store": False,
+    "inactive_storefront": False,  # storefront exists but is closed / password-protected
+    "inaccessible": None,  # did not load, blocked, or asked for a login
+    "uncertain": None,  # loaded, but the reviewer cannot tell
+}
+
+
 def record(db: Session, domain: str, verdict: str, platform: str | None, notes: str, labeller: str) -> None:
-    """verdict: store | not_store | cannot_tell (site down/blocked for the human too)."""
+    """One human judgement. Re-labelling the same domain keeps one row (latest answer, new timestamp)."""
     from datetime import UTC, datetime
 
     item = db.scalar(select(BenchmarkQueue).where(BenchmarkQueue.domain == domain))
     if item is None:
         raise ValueError("domain is not in the labelling queue")
-    if verdict not in ("store", "not_store", "cannot_tell"):
-        raise ValueError("verdict must be store | not_store | cannot_tell")
+    if verdict not in VERDICTS:
+        raise ValueError(f"verdict must be one of {', '.join(VERDICTS)}")
     if platform and platform not in PLATFORMS:
         raise ValueError(f"unknown platform {platform!r}")
-    item.status = "cannot_tell" if verdict == "cannot_tell" else "labelled"
-    item.done_at = datetime.now(UTC)
-    if verdict != "cannot_tell":
-        lb = db.scalar(select(BenchmarkLabel).where(BenchmarkLabel.domain == domain))
-        if lb is None:
-            lb = BenchmarkLabel(domain=domain, split=split_for(domain))
-            db.add(lb)
-        lb.is_ecommerce = verdict == "store"
-        lb.platform = platform if verdict == "store" else None
-        lb.label_source, lb.labeller, lb.notes = "human_sample", labeller, (notes or "")[:500]
+    now = datetime.now(UTC)
+    item.status, item.done_at = "labelled", now
+    lb = db.scalar(select(BenchmarkLabel).where(BenchmarkLabel.domain == domain))
+    if lb is None:
+        lb = BenchmarkLabel(domain=domain, split=split_for(domain))  # split fixed by hash, never chosen
+        db.add(lb)
+    lb.label, lb.is_ecommerce = verdict, VERDICTS[verdict]
+    lb.platform = platform if verdict in ("store", "inactive_storefront") else None
+    lb.label_source, lb.labeller, lb.notes, lb.labelled_at = "human_sample", labeller, (notes or "")[:500], now
     db.commit()
 
 
@@ -277,15 +294,29 @@ def progress(db: Session) -> dict:
     return dict(by)
 
 
-def report(db: Session) -> dict:
+def report(db: Session, final: bool = False, requested_by: str | None = None) -> dict:
+    """TUNE metrics always; HOLDOUT only when `final` — every holdout look is logged, so the
+    holdout set can't quietly become a tuning set."""
     out = {"progress": progress(db)}
     strata = dict(db.execute(select(BenchmarkQueue.domain, BenchmarkQueue.stratum)).tuples().all())
-    for split in ("holdout", "tune"):
+    splits = ("tune", "holdout") if final else ("tune",)
+    if not final:
+        out["holdout"] = "hidden: request a final evaluation to see holdout figures (each request is logged)"
+    for split in splits:
         r = evaluate(db, split)
         labels = list(db.scalars(select(BenchmarkLabel).where(BenchmarkLabel.split == split)))
         per: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         for lb in labels:
-            per[strata.get(lb.domain, "other")]["labelled_store" if lb.is_ecommerce else "labelled_not_store"] += 1
+            per[strata.get(lb.domain, "other")][f"labelled_{lb.label or ('store' if lb.is_ecommerce else 'not_store')}"] += 1
         r["labels_by_stratum"] = {k: dict(v) for k, v in sorted(per.items())}
         out[split] = r
+        if split == "holdout":
+            from app.models import BenchmarkEvaluation
+
+            db.add(BenchmarkEvaluation(split="holdout", requested_by=requested_by, labels=r["labels"],
+                                       summary={k: r[k] for k in ("precision", "recall_decided", "false_positive_rate", "false_negative_rate")}))  # fmt: skip
+            db.commit()
+    from app.models import BenchmarkEvaluation
+
+    out["holdout_evaluations_so_far"] = len(db.scalars(select(BenchmarkEvaluation.id).where(BenchmarkEvaluation.split == "holdout")).all())
     return out
