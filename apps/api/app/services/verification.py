@@ -220,8 +220,7 @@ def verify(host: str, fetcher: SafeFetcher) -> VerificationResult:
                 product_signals = extract_signals(page.text, page.url)
                 evidence["product_page"] = {"url": page.url, "status": page.status, "signals": product_signals}
                 signals = merge_signals(signals, product_signals)
-                pages_html += "
-" + page.text
+                pages_html += "\n" + page.text
         except (FetchError, BlockedDestination, DnsFailure) as e:
             evidence["product_page"] = {"url": product_url, "error": str(e)}
 
