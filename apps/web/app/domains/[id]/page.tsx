@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { StatusBadge } from "@/components/StatusBadge";
-import { type Domain, fmtDate, getJson, type Job, PLATFORM_LABEL } from "@/lib/api";
+import { API_URL, type Domain, fmtDate, fmtPrice, getJson, type Job, PLATFORM_LABEL, type Product } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -13,12 +13,42 @@ type Detail = {
   platform_confidence: number | null;
 };
 
-export default async function DomainPage({ params }: { params: Promise<{ id: string }> }) {
+async function extract(formData: FormData) {
+  "use server";
+  const storeId = String(formData.get("store_id"));
+  const back = `/domains/${encodeURIComponent(String(formData.get("domain_id")))}`;
+  let error = "";
+  try {
+    const res = await fetch(`${API_URL}/api/v1/stores/${encodeURIComponent(storeId)}/products/extract`, {
+      method: "POST",
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      error = typeof body.detail === "string" ? body.detail : `request failed (${res.status})`;
+    }
+  } catch {
+    error = "API unreachable";
+  }
+  redirect(error ? `${back}?error=${encodeURIComponent(error)}` : back);
+}
+
+export default async function DomainPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ error?: string }>;
+}) {
   const { id } = await params;
+  const { error } = await searchParams;
   const data = await getJson<Detail>(`/api/v1/domains/${encodeURIComponent(id)}`);
   if (!data) notFound();
   const { domain, jobs, store_id, platform, platform_confidence } = data;
   const inFlight = jobs.some((j) => ["queued", "running", "retrying"].includes(j.status));
+  const products = store_id
+    ? await getJson<{ items: Product[]; total: number }>(`/api/v1/stores/${encodeURIComponent(store_id)}/products?page_size=100`)
+    : null;
 
   return (
     <div className="space-y-6">
@@ -45,8 +75,52 @@ export default async function DomainPage({ params }: { params: Promise<{ id: str
         </dl>
       </section>
 
+      {store_id && (
+        <section>
+          <div className="mb-2 flex flex-wrap items-center gap-3">
+            <h2 className="font-medium">Products {products ? `(${products.total.toLocaleString()})` : ""}</h2>
+            <form action={extract}>
+              <input type="hidden" name="store_id" value={store_id} />
+              <input type="hidden" name="domain_id" value={domain.id} />
+              <button className="rounded-md bg-slate-900 px-3 py-1 text-sm text-white">Extract products</button>
+            </form>
+            {error && <span className="text-sm text-red-700">{error}</span>}
+          </div>
+          {!products || products.items.length === 0 ? (
+            <p className="text-sm text-slate-500">No products observed yet.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-slate-200 text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Product</th>
+                    <th className="px-3 py-2 font-medium">Price</th>
+                    <th className="px-3 py-2 font-medium">Availability</th>
+                    <th className="px-3 py-2 font-medium">Status</th>
+                    <th className="px-3 py-2 font-medium">Last seen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {products.items.map((p) => (
+                    <tr key={p.id} className="border-b border-slate-100 last:border-0">
+                      <td className="max-w-md px-3 py-2">
+                        <Link href={`/products/${p.id}`} className="hover:underline">{p.title ?? p.product_url}</Link>
+                      </td>
+                      <td className="px-3 py-2 tabular-nums">{fmtPrice(p.current_price, p.currency)}</td>
+                      <td className="px-3 py-2">{p.availability ?? "—"}</td>
+                      <td className="px-3 py-2">{p.status}</td>
+                      <td className="px-3 py-2 text-slate-600">{fmtDate(p.last_seen_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
       <section>
-        <h2 className="mb-2 font-medium">Verification checks</h2>
+        <h2 className="mb-2 font-medium">Checks</h2>
         {jobs.length === 0 ? (
           <p className="text-sm text-slate-500">No checks yet.</p>
         ) : (
@@ -54,15 +128,17 @@ export default async function DomainPage({ params }: { params: Promise<{ id: str
             {jobs.map((j) => (
               <li key={j.id} className="rounded-lg border border-slate-200 bg-white p-4 text-sm">
                 <div className="flex flex-wrap items-center gap-3">
-                  <span className="font-medium">{j.status}</span>
-                  {j.result && <StatusBadge status={j.result.status} />}
+                  <span className="font-medium">
+                    {j.job_type === "products" ? "Product extraction" : "Verification"}: {j.status}
+                  </span>
+                  {j.result && j.job_type !== "products" && <StatusBadge status={j.result.status} />}
                   <span className="text-slate-500">attempts {j.attempts}</span>
                   <span className="text-slate-500">{fmtDate(j.completed_at ?? j.started_at ?? j.scheduled_at)}</span>
                 </div>
                 {j.error_message && <p className="mt-2 text-red-700">{j.error_message}</p>}
                 {j.result && (
                   <details className="mt-2">
-                    <summary className="cursor-pointer text-slate-600">Evidence</summary>
+                    <summary className="cursor-pointer text-slate-600">{j.job_type === "products" ? "Summary" : "Evidence"}</summary>
                     <pre className="mt-2 max-h-96 overflow-auto rounded bg-slate-50 p-3 text-xs">
                       {JSON.stringify(j.result.evidence, null, 2)}
                     </pre>

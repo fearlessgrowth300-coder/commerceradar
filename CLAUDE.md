@@ -11,7 +11,8 @@ The core asset is the **database** (quality, coverage, freshness, history), not 
 - M4 Discovery sources: done (103 tests; live 2026-11-04: common_crawl 8.6k hosts, urlscan 500, crt.sh 104, crawler 5 → 9k candidate domains, 0 duplicates). Adapters in `app/sources/` (`fetch_batch(config, cursor, state, ctx)`); one ingest path `app/services/discovery.py`; `discovery.run_batch` task chains one batch at a time (seq + expiring claim, resumable).
   - Common Crawl reads raw ZipNum index on data.commoncrawl.org via Range requests (the index.commoncrawl.org CDX server 504s). crt.sh only answers narrow queries (TLD-wide ⇒ 502) and takes 15-60s. urlscan keyless = 30 searches/min.
   - Fetcher tries IPv4 first: Docker network has no IPv6 route.
-- Next: M5 product extraction. Verification backlog (pending domains with no job) needs a sweep — M6.
+- M5 Product extraction: done (122 tests; live 2026-11-04: allbirds/aquila.com.au/activebaby.ca → 60 products, all with price+currency+availability, spot-checked vs live page). `app/services/products.py`: sitemaps (product sitemaps first) + homepage links → bounded pages/run (`PRODUCT_PAGES_PER_RUN`=20, 1s delay, robots Crawl-delay) → JSON-LD/OpenGraph → `products` + append-only `product_observations` (new/changed/removed/reappeared). Removal = 404/410 only (absence from a partial crawl proves nothing).
+- Next: M6 continuous monitoring (scheduled re-verification + product re-checks, backlog sweep for ~9k unverified candidates, activity classification, failure recovery).
 
 ## Layout
 - `apps/api/app` — FastAPI + SQLAlchemy + Celery in ONE package (modular monolith). API = `uvicorn app.main:app`, worker = `celery -A app.worker worker`. Same image, different command, so workers can move to other machines later.

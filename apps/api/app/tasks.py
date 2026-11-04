@@ -2,12 +2,14 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import sources
 from app.db import SessionLocal
-from app.models import CrawlJob, DiscoveryRun, DiscoverySource
-from app.services import discovery, verification
+from app.config import settings
+from app.models import CrawlJob, DiscoveryRun, DiscoverySource, Store
+from app.services import discovery, products, verification
 from app.services.fetcher import FetchError, SafeFetcher
 from app.worker import celery_app
 
@@ -163,3 +165,44 @@ def _fail_run(db: Session, rid: uuid.UUID, msg: str) -> str:
 
 def _unclaimed(cursor: dict | None) -> dict:
     return {k: v for k, v in (cursor or {}).items() if k != "claim"}
+
+
+# ---------- products ----------
+
+
+@celery_app.task(bind=True, name="products.extract_store", max_retries=MAX_RETRIES)
+def extract_products(self, job_id: str) -> str:
+    """Idempotent per job; re-running only re-observes (history rows are written on change)."""
+    jid = uuid.UUID(job_id)
+    with SessionLocal() as db:
+        job = db.get(CrawlJob, jid)
+        if job is None or job.status in ("succeeded", "failed"):
+            return "skipped"
+        store = db.scalar(select(Store).where(Store.domain_id == job.domain_id))
+        if store is None:
+            return _fail(db, jid, ValueError("no verified store for this domain"))
+        job.status, job.started_at = "running", job.started_at or datetime.now(UTC)
+        job.attempts += 1
+        db.commit()
+
+        fetcher = SafeFetcher()
+        try:
+            stats = products.extract_store(db, store, fetcher, settings.product_pages_per_run, settings.product_page_delay)
+        except FetchError as e:
+            db.rollback()
+            job = db.get(CrawlJob, jid)
+            if self.request.retries < MAX_RETRIES:
+                job.status, job.error_message = "retrying", str(e)
+                db.commit()
+                raise self.retry(countdown=60 * 2**self.request.retries, exc=e)
+            return _fail(db, jid, e)
+        except Exception as e:
+            return _fail(db, jid, e)
+        finally:
+            fetcher.client.close()
+
+        job = db.get(CrawlJob, jid)
+        job.status, job.completed_at, job.error_message = "succeeded", datetime.now(UTC), None
+        job.result = {"status": "extracted", "evidence": stats.__dict__}
+        db.commit()
+        return "succeeded"

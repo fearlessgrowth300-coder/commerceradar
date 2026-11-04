@@ -150,7 +150,10 @@ class PlatformDetection(Base):
 
 
 class Product(Base):
+    """Current state of a product as last observed. History lives in product_observations."""
+
     __tablename__ = "products"
+    __table_args__ = (UniqueConstraint("store_id", "product_url"),)
     id: Mapped[uuid.UUID] = _pk()
     store_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("stores.id"), index=True)
     external_product_id: Mapped[str | None] = mapped_column(String(200))
@@ -160,11 +163,32 @@ class Product(Base):
     current_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     currency: Mapped[str | None] = mapped_column(String(3))
     availability: Mapped[str | None] = mapped_column(String(30))
-    image_url: Mapped[str | None] = mapped_column(Text)
+    image_url: Mapped[str | None] = mapped_column(Text)  # referenced, never downloaded
+    sku: Mapped[str | None] = mapped_column(String(200))
+    category: Mapped[str | None] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", index=True)
+    extraction_method: Mapped[str | None] = mapped_column(String(30))  # json-ld | opengraph
     first_seen_at: Mapped[datetime] = _ts()
-    last_seen_at: Mapped[datetime] = _ts()
+    last_seen_at: Mapped[datetime] = _ts(index=True)
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = _updated()
+
+
+class ProductObservation(Base):
+    """Append-only: written on first sight and on every tracked change (price, currency,
+    availability, title), removal (404/410) and reappearance."""
+
+    __tablename__ = "product_observations"
+    __table_args__ = (Index("ix_product_observations_product_observed", "product_id", "observed_at"),)
+    id: Mapped[uuid.UUID] = _pk()
+    product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"))
+    observed_at: Mapped[datetime] = _ts()
+    change_type: Mapped[str] = mapped_column(String(20), index=True)  # new | changed | removed | reappeared
+    price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    currency: Mapped[str | None] = mapped_column(String(3))
+    availability: Mapped[str | None] = mapped_column(String(30))
+    title: Mapped[str | None] = mapped_column(Text)
+    details: Mapped[dict[str, Any] | None] = mapped_column(JSONType)  # {field: [old, new]} for changes
 
 
 class StoreObservation(Base):

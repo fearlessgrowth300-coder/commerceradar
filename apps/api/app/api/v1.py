@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -7,8 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import CrawlJob, DiscoveryRun, DiscoverySource
-from app.services import dashboard, discovery, domains
+from app.models import CrawlJob, DiscoveryRun, DiscoverySource, Product, Store
+from app.services import dashboard, discovery, domains, products
 
 router = APIRouter(prefix="/api/v1")
 
@@ -93,6 +94,54 @@ class SourceOut(BaseModel):
     configuration: dict[str, Any]
     urls_discovered: int
     last_run: RunOut | None
+
+
+class ProductOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    store_id: uuid.UUID
+    product_url: str
+    title: str | None
+    description: str | None
+    image_url: str | None
+    sku: str | None
+    category: str | None
+    current_price: Decimal | None
+    currency: str | None
+    availability: str | None
+    status: str
+    extraction_method: str | None
+    first_seen_at: datetime
+    last_seen_at: datetime
+
+
+class ProductPage(BaseModel):
+    items: list[ProductOut]
+    total: int
+    page: int
+    page_size: int
+
+
+class ObservationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    observed_at: datetime
+    change_type: str
+    price: Decimal | None
+    currency: str | None
+    availability: str | None
+    title: str | None
+    details: dict[str, Any] | None
+
+
+class ProductDetail(BaseModel):
+    product: ProductOut
+    history: list[ObservationOut]
+
+
+def _enqueue_products(job_id: uuid.UUID) -> None:
+    from app.tasks import extract_products
+
+    extract_products.delay(str(job_id))
 
 
 def _enqueue_run(run_id: uuid.UUID, seq: int) -> None:
@@ -200,3 +249,39 @@ def resume_run(run_id: uuid.UUID, db: Session = Depends(get_db)):
         raise HTTPException(409, str(e)) from e
     except Exception as e:
         raise HTTPException(503, "queue unavailable") from e
+
+
+@router.post("/stores/{store_id}/products/extract", response_model=JobOut, status_code=202)
+def extract_store_products(store_id: uuid.UUID, db: Session = Depends(get_db)):
+    store = db.get(Store, store_id)
+    if not store:
+        raise HTTPException(404, "store not found")
+    try:
+        job, _ = products.queue_extraction(db, store, _enqueue_products)
+    except products.NotExtractable as e:
+        raise HTTPException(409, str(e)) from e
+    except Exception as e:
+        raise HTTPException(503, "queue unavailable") from e
+    return job
+
+
+@router.get("/stores/{store_id}/products", response_model=ProductPage)
+def list_store_products(
+    store_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    status: str | None = Query(None, pattern="^(active|removed)$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+):
+    if not db.get(Store, store_id):
+        raise HTTPException(404, "store not found")
+    items, total = products.list_products(db, store_id, status, page, page_size)
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/products/{product_id}", response_model=ProductDetail)
+def get_product(product_id: uuid.UUID, db: Session = Depends(get_db)):
+    product = db.get(Product, product_id)
+    if not product:
+        raise HTTPException(404, "product not found")
+    return {"product": product, "history": products.product_history(db, product_id)}
