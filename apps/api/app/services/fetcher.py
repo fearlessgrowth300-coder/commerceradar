@@ -90,25 +90,31 @@ class SafeFetcher:
         except ValueError:
             pass
 
-        ip = resolve_public(host, self.resolver)[0]
-        netloc = f"[{ip}]" if ":" in ip else ip
-        if parts.port:
-            netloc += f":{parts.port}"
-        pinned = parts._replace(netloc=netloc).geturl()
+        # Every address is already validated public. IPv4 first: many hosts (incl. Docker's default
+        # network) have no IPv6 route, and DNS often lists AAAA first. Fall through on connect errors.
+        ips = sorted(resolve_public(host, self.resolver), key=lambda a: ":" in a)
         host_header = host if not parts.port else f"{host}:{parts.port}"
-
-        try:
-            with self.client.stream(
-                "GET", pinned, headers={**headers, "Host": host_header}, extensions={"sni_hostname": host}
-            ) as resp:
-                body = bytearray()
-                truncated = False
-                for chunk in resp.iter_bytes():
-                    body.extend(chunk)
-                    if len(body) > self.max_bytes:
-                        truncated = True
-                        del body[self.max_bytes :]
-                        break
-                return resp, bytes(body), truncated
-        except httpx.HTTPError as e:
-            raise FetchError(f"{type(e).__name__} fetching {url}") from e
+        last: httpx.HTTPError | None = None
+        for ip in ips:
+            netloc = f"[{ip}]" if ":" in ip else ip
+            if parts.port:
+                netloc += f":{parts.port}"
+            pinned = parts._replace(netloc=netloc).geturl()
+            try:
+                with self.client.stream(
+                    "GET", pinned, headers={**headers, "Host": host_header}, extensions={"sni_hostname": host}
+                ) as resp:
+                    body = bytearray()
+                    truncated = False
+                    for chunk in resp.iter_bytes():
+                        body.extend(chunk)
+                        if len(body) > self.max_bytes:
+                            truncated = True
+                            del body[self.max_bytes :]
+                            break
+                    return resp, bytes(body), truncated
+            except httpx.ConnectError as e:
+                last = e  # unreachable address: try the next one
+            except httpx.HTTPError as e:
+                raise FetchError(f"{type(e).__name__} fetching {url}") from e
+        raise FetchError(f"{type(last).__name__} fetching {url} (tried {len(ips)} addresses)") from last
