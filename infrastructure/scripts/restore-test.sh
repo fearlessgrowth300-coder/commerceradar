@@ -15,8 +15,12 @@ NAME=cr-restore-test
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker run -d --name "$NAME" --network "$NET" -e POSTGRES_USER="$USER" -e POSTGRES_PASSWORD="$PASS" -e POSTGRES_DB=restored postgres:17-alpine >/dev/null
 trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT
-for i in $(seq 1 30); do docker exec "$NAME" pg_isready -U "$USER" -d restored >/dev/null 2>&1 && break; sleep 2; done
-sleep 2
+# The image starts a temporary server for initdb, stops it, then starts the real one:
+# wait for the SECOND "ready to accept connections".
+for i in $(seq 1 60); do
+  [ "$(docker logs "$NAME" 2>&1 | grep -c 'ready to accept connections')" -ge 2 ] && break
+  sleep 2
+done
 docker exec -i "$NAME" pg_restore -U "$USER" -d restored --no-owner < "$DUMP"
 COUNTS="select 'alembic', version_num::text from alembic_version union all select 'domains', count(*)::text from domains union all select 'stores', count(*)::text from stores union all select 'products', count(*)::text from products union all select 'store_observations', count(*)::text from store_observations union all select 'discovered_urls', count(*)::text from discovered_urls"
 echo "== restored copy"
