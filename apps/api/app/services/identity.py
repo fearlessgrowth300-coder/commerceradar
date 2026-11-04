@@ -8,7 +8,9 @@ Model
                    a time (partial unique index); each store has exactly one current primary.
 
 Evidence and what it is allowed to do (measured on production 2026-11-04):
-  storefront_id      0.97  Same Shopify shop id (`Shopify.shop`) AND the response is served by
+  storefront_id      0.97  BigCommerce: same server-set `x-bc-store-id` header AND a BigCommerce
+                           session cookie (the HTML `s-<hash>` alone is copyable and ignored).
+                           Shopify: same Shopify shop id (`Shopify.shop`) AND the response is served by
                            Shopify (Shopify IP block 23.227.38.0/24, Shopify cookies or headers).
                            The HTML id alone is NOT enough: 4 gambling/spam domains carried a
                            real store's id in copied HTML without being served by Shopify.
@@ -34,6 +36,7 @@ from app.services.domains import InvalidDomain, normalize_domain
 MERGE_MIN = 0.9
 SHOPIFY_NET = ipaddress.ip_network("23.227.38.0/24")  # documented A-record target for Shopify custom domains
 SHOPIFY_COOKIES = {"_shopify_y", "_shopify_s", "cart_currency", "localization", "_shopify_essential", "secure_customer_sig"}
+BIGCOMMERCE_COOKIES = {"SHOP_SESSION_TOKEN", "__HOST-SHOP_SESSION_TOKEN"}
 PLATFORM_HOSTED = ("myshopify.com", "mybigcommerce.com")
 # Never treat a redirect into these as "this domain is that store" (marketplaces, link hubs, platforms).
 NOT_A_STORE_IDENTITY = {
@@ -68,9 +71,22 @@ def shopify_served(serving: dict) -> bool:
     return bool(SHOPIFY_COOKIES & set(serving.get("cookies") or []))
 
 
+def bigcommerce_store_id(serving: dict) -> str | None:
+    """BigCommerce's edge sets `x-bc-store-id` (numeric) and its own session cookie on every
+    storefront response (measured: 11/11 *.mybigcommerce.com storefronts, 2026-11-04). Both are
+    required; the `s-<hash>` in HTML asset URLs is copyable and never used for identity."""
+    sid = ((serving or {}).get("headers") or {}).get("x-bc-store-id", "").strip()
+    if sid.isdigit() and BIGCOMMERCE_COOKIES & set((serving or {}).get("cookies") or []):
+        return sid
+    return None
+
+
 def storefront_key(signals: dict, serving: dict) -> str | None:
     shop = (signals or {}).get("shopify_shop")
-    return f"shopify:{shop}" if shop and shopify_served(serving or {}) else None
+    if shop and shopify_served(serving or {}):
+        return f"shopify:{shop}"
+    bc = bigcommerce_store_id(serving)
+    return f"bigcommerce:{bc}" if bc else None
 
 
 def _host_of(url: str | None) -> str | None:

@@ -210,3 +210,43 @@ def test_helpers():
     assert identity.shopify_served({"ip": SHOPIFY_IP}) and not identity.shopify_served({"ip": OTHER_IP})
     assert identity.storefront_key({"shopify_shop": "a.myshopify.com"}, {"cookies": ["cart_currency"]}) == "shopify:a.myshopify.com"
     assert identity.storefront_key({"shopify_shop": "a.myshopify.com"}, {"ip": OTHER_IP}) is None
+
+
+
+def bc_page(store_id: str | None, cookie: bool = True, html_hash: str = "abc123xyz") -> httpx.Response:
+    html = HOME.replace("</body>", f'<link href="https://cdn11.bigcommerce.com/s-{html_hash}/stencil/x.css"></body>')
+    headers = [("content-type", "text/html")]
+    if store_id:
+        headers.append(("x-bc-store-id", store_id))
+    if cookie:
+        headers.append(("set-cookie", "SHOP_SESSION_TOKEN=x; Path=/"))
+    return httpx.Response(200, text=html, headers=headers)
+
+
+def test_bigcommerce_same_server_store_id_links_domains(db):
+    t, web = tag(), Web()
+    sid = str(1000000000 + int(t, 16) % 99999999)
+    web.add(f"bc{t}.mybigcommerce.com", "192.200.160.22", lambda: bc_page(sid))
+    web.add(f"bcbrand{t}.com", "192.200.160.22", lambda: bc_page(sid))
+    a = check(db, web, f"bc{t}.mybigcommerce.com")
+    b = check(db, web, f"bcbrand{t}.com")
+    assert a.id == b.id and a.storefront_key == f"bigcommerce:{sid}"
+    db.refresh(a)
+    assert db.get(Domain, a.domain_id).normalized_domain == f"bcbrand{t}.com"  # custom domain promoted over mybigcommerce
+
+
+def test_bigcommerce_copied_html_hash_or_header_without_cookie_does_not_merge(db):
+    t, web = tag(), Web()
+    sid = str(2000000000 + int(t, 16) % 99999999)
+    web.add(f"realbc{t}.com", "192.200.160.22", lambda: bc_page(sid, html_hash="samehash1"))
+    web.add(f"copy{t}.net", OTHER_IP, lambda: bc_page(None, cookie=False, html_hash="samehash1"))  # copied HTML only
+    web.add(f"half{t}.net", OTHER_IP, lambda: bc_page(sid, cookie=False))  # header but no BigCommerce cookie
+    real = check(db, web, f"realbc{t}.com")
+    assert check(db, web, f"copy{t}.net").id != real.id
+    assert check(db, web, f"half{t}.net").id != real.id
+
+
+def test_bigcommerce_key_helper():
+    assert identity.storefront_key({}, {"headers": {"x-bc-store-id": "1002802541"}, "cookies": ["SHOP_SESSION_TOKEN"]}) == "bigcommerce:1002802541"
+    assert identity.storefront_key({}, {"headers": {"x-bc-store-id": "1002802541"}, "cookies": []}) is None
+    assert identity.storefront_key({}, {"headers": {"x-bc-store-id": "abc"}, "cookies": ["SHOP_SESSION_TOKEN"]}) is None

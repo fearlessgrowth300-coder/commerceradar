@@ -62,3 +62,43 @@ def test_metrics_need_enough_samples_and_count_abstentions(db):
     small = benchmark._rate(5, 10)
     assert isinstance(small, str) and small.startswith("insufficient")
     assert benchmark._rate(27, 30) == 0.9
+
+
+
+def test_queue_is_stratified_blind_and_records_labels(db, client):
+    from datetime import UTC, datetime
+
+    from app.models import BenchmarkQueue, CrawlJob, Domain
+
+    tag = uuid.uuid4().hex[:6]
+    cases = {"not_ecommerce": {"score": {"points": 0}}, "uncertain": {"reason": "homepage has almost no server-rendered content; x"}}
+    doms = []
+    for i, (status, ev) in enumerate([*cases.items()] * 3):
+        d = Domain(normalized_domain=f"q{i}{tag}.example", verification_status=status)
+        db.add(d)
+        db.flush()
+        db.add(CrawlJob(domain_id=d.id, target_domain=d.normalized_domain, job_type="verify", status="succeeded",
+                        completed_at=datetime.now(UTC), result={"status": status, "evidence": ev}))  # fmt: skip
+        doms.append(d.normalized_domain)
+    db.commit()
+    added = benchmark.build_queue(db, f"t-{tag}", seed=1, targets={"not_ecommerce": 2, "uncertain_js_shell": 2})
+    assert added == {"not_ecommerce": 2, "uncertain_js_shell": 2}
+    benchmark.build_queue(db, f"t-{tag}", seed=1, targets={"not_ecommerce": 2})  # re-run: never re-queues a domain
+    queued = list(db.scalars(select(BenchmarkQueue.domain)))
+    assert len(queued) == len(set(queued))
+
+    nxt = client.get("/api/v1/admin/benchmark/next").json()
+    assert set(nxt["item"]) == {"domain", "url"}  # blind: no verdict / stratum / source
+    dom = nxt["item"]["domain"]
+    assert client.post("/api/v1/admin/benchmark/label", json={"domain": dom, "verdict": "store", "platform": "shopify"}).status_code == 200
+    lb = db.scalar(select(BenchmarkLabel).where(BenchmarkLabel.domain == dom))
+    assert lb.is_ecommerce and lb.label_source == "human_sample" and lb.labeller
+    assert client.post("/api/v1/admin/benchmark/label", json={"domain": "nope.example", "verdict": "store"}).status_code == 422
+    assert client.post("/api/v1/admin/benchmark/label", json={"domain": dom, "verdict": "maybe"}).status_code == 422
+    other = db.scalars(select(BenchmarkQueue).where(BenchmarkQueue.batch == f"t-{tag}", BenchmarkQueue.status == "open")).first()
+    client.post("/api/v1/admin/benchmark/label", json={"domain": other.domain, "verdict": "cannot_tell"})
+    db.refresh(other)
+    assert other.status == "cannot_tell"
+    assert db.scalar(select(BenchmarkLabel).where(BenchmarkLabel.domain == other.domain)) is None  # no label invented
+    rep = client.get("/api/v1/admin/benchmark/report").json()
+    assert {"progress", "holdout", "tune"} <= set(rep)

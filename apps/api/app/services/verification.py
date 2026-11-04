@@ -216,7 +216,8 @@ def verify(host: str, fetcher: SafeFetcher) -> VerificationResult:
 
     serving = {
         "ip": home.ip,
-        "headers": {k: home.headers[k] for k in ("powered-by", "server", "x-shopid", "x-shopify-stage") if k in home.headers},
+        "headers": {k: home.headers[k] for k in ("powered-by", "server", "x-shopid", "x-shopify-stage", "x-bc-store-id")
+                    if k in home.headers},
         "cookies": platforms.cookie_names(home.set_cookies),
     }
     evidence: dict[str, Any] = {"homepage": {"url": home.url, "status": home.status, "redirects": home.redirects, "ip": home.ip}}

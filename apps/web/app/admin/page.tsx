@@ -69,6 +69,7 @@ export default async function Admin({ searchParams }: { searchParams: Promise<{ 
   return (
     <div className="space-y-6 text-sm">
       <h1 className="text-lg font-semibold">Admin</h1>
+      <p><a href="/admin/benchmark" className="underline">Accuracy benchmark: blind labelling →</a></p>
       {error && <p className="text-red-700">{error}</p>}
       <p className="text-slate-600">{ov.users.length} users · {ov.organizations.length} organizations · {ov.active_sessions} active sessions · {ov.suppressed_domains} suppressed domains</p>
 

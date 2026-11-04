@@ -44,6 +44,7 @@ RULES: dict[str, list[tuple[str, str, int, str]]] = {
         ("html", r"wix-ecommerce|wixstores|ecom-platform", 2, "Wix Stores"),
     ],
     "bigcommerce": [
+        ("header:x-bc-store-id", r"^\d+$", 4, "x-bc-store-id header"),
         ("html", r"cdn\d*\.bigcommerce\.com", 4, "BigCommerce CDN"),
         ("html", r"\bBCData\s*=|stencil-utils|stencilBootstrap", 3, "BigCommerce Stencil JS"),
         ("cookie", r"^SHOP_SESSION_TOKEN$|^fornax_anonymousId$", 3, "BigCommerce cookies"),

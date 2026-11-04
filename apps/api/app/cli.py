@@ -30,6 +30,9 @@ def main(argv: list[str] | None = None) -> int:
     b = sub.add_parser("benchmark-eval", help="precision/recall on a split (default: holdout)")
     b.add_argument("--split", default="holdout", choices=("tune", "holdout"))
     b.add_argument("--live", action="store_true", help="re-verify labelled domains now instead of using stored verdicts")
+    b = sub.add_parser("benchmark-queue", help="fill the blind labelling queue (stratified, default 200)")
+    b.add_argument("--batch", default="m11-1")
+    b.add_argument("--seed", type=int, default=11)
     b = sub.add_parser("probe-shells", help="read-only: what static evidence do JS-only pages expose?")
     b.add_argument("--limit", type=int, default=50)
     args = p.parse_args(argv)
@@ -62,6 +65,11 @@ def main(argv: list[str] | None = None) -> int:
         with SessionLocal() as db:
             preds = _live_predictions(db, args.split) if args.live else None
             print(json.dumps(benchmark.evaluate(db, args.split, preds), indent=2, default=str))
+    elif args.cmd == "benchmark-queue":
+        from app.services import benchmark
+
+        with SessionLocal() as db:
+            print(benchmark.build_queue(db, args.batch, args.seed))
     elif args.cmd == "probe-shells":
         import json
 

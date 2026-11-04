@@ -14,7 +14,7 @@ from app.api.deps import Ctx, admin, current
 from app.config import settings
 from app.db import get_db
 from app.models import Organization, SavedSearch, User
-from app.services import accounts, billing, domains, metrics, suppression, workspace
+from app.services import accounts, benchmark, billing, domains, metrics, suppression, workspace
 
 public = APIRouter(prefix="/api/v1")
 router = APIRouter(prefix="/api/v1")
@@ -267,3 +267,36 @@ def unsuppress(domain: str, ctx: Ctx = Depends(admin), db: Session = Depends(get
 def admin_metrics(db: Session = Depends(get_db)):
     """Measured throughput, durations, source yield, storage and queue depth (last 24 h)."""
     return metrics.snapshot(db)
+
+
+
+# ---------- blind labelling (M11) ----------
+
+
+class LabelIn(BaseModel):
+    domain: str = Field(max_length=253)
+    verdict: str = Field(pattern="^(store|not_store|cannot_tell)$")
+    platform: str | None = Field(None, max_length=30)
+    notes: str = Field("", max_length=500)
+
+
+@router.get("/admin/benchmark/next", dependencies=[Depends(admin)])
+def benchmark_next(db: Session = Depends(get_db)):
+    """One domain to label. Deliberately WITHOUT our verdict, stratum or source (blind)."""
+    item = benchmark.next_item(db)
+    return {"item": {"domain": item.domain, "url": f"https://{item.domain}/"} if item else None,
+            "progress": benchmark.progress(db), "platforms": list(benchmark.PLATFORMS)}  # fmt: skip
+
+
+@router.post("/admin/benchmark/label")
+def benchmark_label(body: LabelIn, ctx: Ctx = Depends(admin), db: Session = Depends(get_db)):
+    try:
+        benchmark.record(db, body.domain, body.verdict, body.platform or None, body.notes, ctx.user.email)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    return {"progress": benchmark.progress(db)}
+
+
+@router.get("/admin/benchmark/report", dependencies=[Depends(admin)])
+def benchmark_report(db: Session = Depends(get_db)):
+    return benchmark.report(db)

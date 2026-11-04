@@ -432,3 +432,17 @@ class BenchmarkLabel(Base):
     split: Mapped[str] = mapped_column(String(10), index=True)  # tune | holdout (fixed by hash of the domain)
     notes: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = _ts()
+
+
+class BenchmarkQueue(Base):
+    """Domains waiting for a blind human label (M11). `stratum` records WHY it was sampled (our
+    verdict at sampling time) and is never shown to the labeller."""
+
+    __tablename__ = "benchmark_queue"
+    id: Mapped[uuid.UUID] = _pk()
+    domain: Mapped[str] = mapped_column(String(253), unique=True)
+    stratum: Mapped[str] = mapped_column(String(40), index=True)
+    batch: Mapped[str] = mapped_column(String(40), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="open", index=True)  # open | labelled | cannot_tell
+    created_at: Mapped[datetime] = _ts()
+    done_at: Mapped[datetime | None] = _opt_ts()

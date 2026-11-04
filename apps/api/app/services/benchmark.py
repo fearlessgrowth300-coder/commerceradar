@@ -23,7 +23,7 @@ from collections import defaultdict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import BenchmarkLabel, DiscoveredUrl, DiscoverySource, Domain, Store
+from app.models import BenchmarkLabel, BenchmarkQueue, CrawlJob, DiscoveredUrl, DiscoverySource, Domain, Store
 from app.services.domains import InvalidDomain, normalize_domain
 
 LABEL_SOURCES = ("vendor_showcase", "human_sample", "known_positive", "known_negative", "hard_case")
@@ -167,3 +167,125 @@ def evaluate(db: Session, split: str = "holdout", predictions: dict[str, tuple[s
         "by_source": {s: dict(v) for s, v in sorted(per_source.items())},
         "min_n_for_a_figure": MIN_N,
     }
+
+
+
+# ---------- stratified blind labelling queue (M11) ----------
+
+# stratum → target count in a 200-domain batch. Strata come from OUR verdict at sampling time,
+# so every kind of case is represented; the labeller never sees the stratum.
+STRATA = {
+    "confirmed_shopify": 30, "confirmed_woocommerce": 15, "confirmed_other_platform": 15, "probable": 15,
+    "not_ecommerce": 35, "uncertain_js_shell": 25, "uncertain_bot_blocked": 20, "unreachable": 15,
+    "inactive_storefront": 15, "uncertain_borderline_score": 15,
+}  # fmt: skip
+
+
+def _stratum(status: str, platform: str | None, reason: str, points) -> str | None:
+    if status == "confirmed_ecommerce":
+        return {"shopify": "confirmed_shopify", "woocommerce": "confirmed_woocommerce"}.get(platform or "", "confirmed_other_platform")
+    if status == "probable_ecommerce":
+        return "probable"
+    if status == "not_ecommerce":
+        return "not_ecommerce"
+    if status == "inactive_storefront":
+        return "inactive_storefront"
+    if status in ("temporarily_unreachable", "blocked"):
+        return "unreachable"
+    if status == "uncertain":
+        if "no server-rendered content" in reason:
+            return "uncertain_js_shell"
+        if "HTTP 403" in reason or "HTTP 429" in reason:
+            return "uncertain_bot_blocked"
+        if points in (2, 3, "2", "3"):
+            return "uncertain_borderline_score"
+    return None
+
+
+def build_queue(db: Session, batch: str, seed: int, targets: dict[str, int] | None = None) -> dict[str, int]:
+    """Fill the blind labelling queue. Idempotent per domain (unique)."""
+    targets = targets or STRATA
+    latest = (
+        select(CrawlJob.domain_id, CrawlJob.result, CrawlJob.completed_at)
+        .where(CrawlJob.job_type == "verify", CrawlJob.status == "succeeded")
+        .subquery()
+    )
+    rows = db.execute(
+        select(Domain.normalized_domain, Domain.verification_status, Store.primary_platform, latest.c.result, latest.c.completed_at)
+        .join(latest, latest.c.domain_id == Domain.id)
+        .outerjoin(Store, Store.domain_id == Domain.id)
+        .where(Domain.verification_status != "pending", Domain.suppressed_at.is_(None))
+    ).all()  # fmt: skip
+    newest: dict[str, tuple] = {}
+    for dom, status, platform, result, done in rows:  # keep each domain's latest check
+        if dom not in newest or (done and newest[dom][3] and done > newest[dom][3]):
+            newest[dom] = (status, platform, result or {}, done)
+    pools: dict[str, list[str]] = defaultdict(list)
+    for dom, (status, platform, result, _) in newest.items():
+        ev = result.get("evidence") or {}
+        s = _stratum(status, platform, ev.get("reason") or "", (ev.get("score") or {}).get("points"))
+        if s in targets:
+            pools[s].append(dom)
+    taken = set(db.scalars(select(BenchmarkQueue.domain))) | set(db.scalars(select(BenchmarkLabel.domain)))
+    rng = random.Random(seed)
+    added: dict[str, int] = {}
+    for s, n in targets.items():
+        pool = sorted(set(pools.get(s, [])) - taken)
+        pick = rng.sample(pool, min(n, len(pool)))
+        db.add_all(BenchmarkQueue(domain=d, stratum=s, batch=batch, status="open") for d in pick)
+        added[s] = len(pick)
+    db.commit()
+    return added
+
+
+def next_item(db: Session) -> BenchmarkQueue | None:
+    # random order inside the open queue so strata are interleaved (the labeller can't infer them)
+    open_ = list(db.scalars(select(BenchmarkQueue).where(BenchmarkQueue.status == "open")))
+    if not open_:
+        return None
+    return sorted(open_, key=lambda q: hashlib.sha256(q.domain.encode()).hexdigest())[0]
+
+
+def record(db: Session, domain: str, verdict: str, platform: str | None, notes: str, labeller: str) -> None:
+    """verdict: store | not_store | cannot_tell (site down/blocked for the human too)."""
+    from datetime import UTC, datetime
+
+    item = db.scalar(select(BenchmarkQueue).where(BenchmarkQueue.domain == domain))
+    if item is None:
+        raise ValueError("domain is not in the labelling queue")
+    if verdict not in ("store", "not_store", "cannot_tell"):
+        raise ValueError("verdict must be store | not_store | cannot_tell")
+    if platform and platform not in PLATFORMS:
+        raise ValueError(f"unknown platform {platform!r}")
+    item.status = "cannot_tell" if verdict == "cannot_tell" else "labelled"
+    item.done_at = datetime.now(UTC)
+    if verdict != "cannot_tell":
+        lb = db.scalar(select(BenchmarkLabel).where(BenchmarkLabel.domain == domain))
+        if lb is None:
+            lb = BenchmarkLabel(domain=domain, split=split_for(domain))
+            db.add(lb)
+        lb.is_ecommerce = verdict == "store"
+        lb.platform = platform if verdict == "store" else None
+        lb.label_source, lb.labeller, lb.notes = "human_sample", labeller, (notes or "")[:500]
+    db.commit()
+
+
+def progress(db: Session) -> dict:
+    from sqlalchemy import func
+
+    by = db.execute(select(BenchmarkQueue.status, func.count()).group_by(BenchmarkQueue.status)).tuples().all()
+    return dict(by)
+
+
+def report(db: Session) -> dict:
+    out = {"progress": progress(db)}
+    strata = dict(db.execute(select(BenchmarkQueue.domain, BenchmarkQueue.stratum)).tuples().all())
+    for split in ("holdout", "tune"):
+        r = evaluate(db, split)
+        labels = list(db.scalars(select(BenchmarkLabel).where(BenchmarkLabel.split == split)))
+        per: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        for lb in labels:
+            per[strata.get(lb.domain, "other")]["labelled_store" if lb.is_ecommerce else "labelled_not_store"] += 1
+        r["labels_by_stratum"] = {k: dict(v) for k, v in sorted(per.items())}
+        out[split] = r
+    return out
