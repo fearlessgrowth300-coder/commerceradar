@@ -139,5 +139,5 @@ def get_domain_detail(db: Session, domain_id: uuid.UUID):
     jobs = db.scalars(
         select(CrawlJob).where(CrawlJob.domain_id == domain_id).order_by(CrawlJob.scheduled_at.desc()).limit(20)
     ).all()
-    store_id = db.scalar(select(Store.id).where(Store.domain_id == domain_id))
-    return domain, jobs, store_id
+    store = db.scalar(select(Store).where(Store.domain_id == domain_id))
+    return domain, jobs, store

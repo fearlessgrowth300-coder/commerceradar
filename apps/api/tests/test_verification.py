@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app import tasks
 from app.api import v1
 from app.db import SessionLocal
-from app.models import CrawlJob, Domain, Store, StoreObservation
+from app.models import CrawlJob, Domain, PlatformDetection, Store, StoreObservation
 from app.security.ssrf import BlockedDestination, DnsFailure, is_public_ip, resolve_public
 from app.services import verification
 from app.services.domains import InvalidDomain, normalize_domain
@@ -290,17 +290,39 @@ def test_task_end_to_end_creates_store_with_evidence(client, queued, monkeypatch
         domain = db.get(Domain, job.domain_id)
         store = db.scalar(select(Store).where(Store.domain_id == domain.id))
         obs = db.scalars(select(StoreObservation).where(StoreObservation.store_id == store.id)).all()
+        det = db.scalars(select(PlatformDetection).where(PlatformDetection.store_id == store.id)).all()
     assert job.status == "succeeded" and job.attempts == 1
     assert job.result["status"] == "confirmed_ecommerce"
     assert job.result["evidence"]["score"]["points"] >= 7
     assert domain.verification_status == "confirmed_ecommerce"
     assert store.store_name == "Acme Outfitters" and store.activity_status == "active"
-    assert store.primary_platform == "unknown"  # platform detection is M3
+    # generic fixture carries no platform fingerprint ⇒ custom, low confidence, recorded with evidence
+    assert store.primary_platform == "custom" and store.platform_confidence == 0.3
+    assert [d.platform for d in det] == ["custom"] and det[0].detection_method.startswith("deterministic")
     assert len(obs) == 1
 
     detail = client.get(f"/api/v1/domains/{domain.id}").json()
-    assert detail["store_id"] == str(store.id)
+    assert detail["store_id"] == str(store.id) and detail["platform"] == "custom"
+    assert detail["jobs"][0]["result"]["platform"]["platform"] == "custom"
     assert detail["jobs"][0]["result"]["status"] == "confirmed_ecommerce"
+
+
+def test_task_records_shopify_from_header_and_cookie(client, queued, monkeypatch):
+    host = _host()
+    home = httpx.Response(
+        200,
+        text=html("store_home.html"),
+        headers=[("content-type", "text/html"), ("x-shopid", "123"), ("set-cookie", "_shopify_y=abc; Path=/")],
+    )
+    _use_fixture_site(monkeypatch, host, {(host, "/"): home, (host, "/products/blue-jacket"): page("store_product.html")})
+    job_id = client.post("/api/v1/discovery/domains", json={"domain": host}).json()["job"]["id"]
+    tasks.verify_domain.apply(args=[job_id])
+    with SessionLocal() as db:
+        store = db.scalar(select(Store).join(Domain).where(Domain.normalized_domain == host))
+        det = db.scalar(select(PlatformDetection).where(PlatformDetection.store_id == store.id))
+    assert store.primary_platform == "shopify" and store.platform_confidence == pytest.approx(7 / 8, abs=0.01)
+    rules = {h["rule"] for h in det.evidence["candidates"]["shopify"]["hits"]}
+    assert rules == {"x-shopid header", "Shopify cookies"}
 
 
 def test_task_not_ecommerce_creates_no_store(client, queued, monkeypatch):

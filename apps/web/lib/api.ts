@@ -29,7 +29,13 @@ export type Job = {
   started_at: string | null;
   completed_at: string | null;
   error_message: string | null;
-  result: { status: string; confidence: number; resolution: string; evidence: Record<string, unknown> } | null;
+  result: {
+    status: string;
+    confidence: number;
+    resolution: string;
+    evidence: Record<string, unknown>;
+    platform?: { platform: string; confidence: number; evidence: Record<string, unknown> } | null;
+  } | null;
 };
 
 export const STATUS_LABEL: Record<string, string> = {
@@ -45,3 +51,16 @@ export const STATUS_LABEL: Record<string, string> = {
 export function fmtDate(s: string | null): string {
   return s ? new Date(s).toISOString().replace("T", " ").slice(0, 16) + " UTC" : "—";
 }
+
+export const PLATFORM_LABEL: Record<string, string> = {
+  shopify: "Shopify",
+  woocommerce: "WooCommerce",
+  wix: "Wix",
+  bigcommerce: "BigCommerce",
+  magento: "Magento / Adobe Commerce",
+  prestashop: "PrestaShop",
+  squarespace: "Squarespace",
+  opencart: "OpenCart",
+  custom: "Custom (no known platform)",
+  unknown: "Unknown (insufficient evidence)",
+};
