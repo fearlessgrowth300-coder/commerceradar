@@ -120,6 +120,7 @@ def extract_signals(html: str, page_url: str) -> dict[str, Any]:
         "product_links": product_links[:10],
         "product_link_count": len(product_links),
         "price_count": len(prices),
+        "text_chars": len(" ".join(body.split())),
     }
 
 
@@ -138,6 +139,9 @@ def score(signals: dict[str, Any]) -> tuple[int, list[str]]:
     if signals.get("price_count", 0) >= 3:
         hits.append("prices")
     return sum(WEIGHTS[h] for h in hits), hits
+
+
+MIN_TEXT_CHARS = 200
 
 
 def classify(points: int, hits: list[str]) -> tuple[str, float]:
@@ -218,6 +222,10 @@ def verify(host: str, fetcher: SafeFetcher) -> VerificationResult:
 
     points, hits = score(signals)
     status, confidence = classify(points, hits)
+    if status == "not_ecommerce" and evidence["homepage"]["signals"]["text_chars"] < MIN_TEXT_CHARS:
+        # Empty shell (JS-rendered app, geo/consent interstitial): absence of signals proves nothing.
+        status, confidence = "uncertain", 0.0
+        evidence["reason"] = "homepage has almost no server-rendered content; cannot judge without executing JS"
     evidence["score"] = {"points": points, "signals_hit": hits, "weights": WEIGHTS}
     return VerificationResult(
         status, confidence, "resolved", evidence, final_url=home.url, site_name=signals["site_name"] or signals["title"]

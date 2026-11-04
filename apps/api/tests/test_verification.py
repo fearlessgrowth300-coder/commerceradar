@@ -195,6 +195,13 @@ def test_verify_follows_one_product_page():
     assert r.site_name == "Acme Outfitters"
 
 
+def test_empty_js_shell_is_uncertain_not_negative():
+    shell = '<html><head></head><body><div id="root"></div><script src="/app.js"></script></body></html>'
+    routes = {("shop.example", "/"): httpx.Response(200, text=shell, headers={"content-type": "text/html"})}
+    r = verification.verify("shop.example", SafeFetcher(fake_dns({"shop.example": PUBLIC_IP}), site(routes)))
+    assert r.status == "uncertain" and r.confidence == 0.0 and "JS" in r.evidence["reason"]
+
+
 def test_verify_respects_robots_disallow():
     seen = []
     routes = {
