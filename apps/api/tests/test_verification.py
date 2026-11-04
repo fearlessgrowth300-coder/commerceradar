@@ -313,7 +313,8 @@ def test_task_end_to_end_creates_store_with_evidence(client, queued, monkeypatch
     # generic fixture carries no platform fingerprint ⇒ custom, low confidence, recorded with evidence
     assert store.primary_platform == "custom" and store.platform_confidence == 0.3
     assert [d.platform for d in det] == ["custom"] and det[0].detection_method.startswith("deterministic")
-    assert sorted(o.observation_type for o in obs) == ["activity_change", "verification"]  # initial uncertain → active
+    kinds = [o.observation_type for o in obs]
+    assert kinds.count("verification") == 1 and "activity_change" in kinds  # plus signal rows
 
     detail = client.get(f"/api/v1/domains/{domain.id}").json()
     assert detail["store_id"] == str(store.id) and detail["platform"] == "custom"

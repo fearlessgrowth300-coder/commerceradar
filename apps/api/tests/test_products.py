@@ -181,8 +181,8 @@ def test_extract_store_saves_tracks_changes_and_removals(db):
     products.extract_store(db, store, site.fetcher(), max_pages=10, delay=0)
     db.refresh(rows["b"])
     assert rows["b"].status == "active" and history(db, rows["b"].id)[-1][0] == "reappeared"
-    runs = db.scalars(select(StoreObservation).where(StoreObservation.store_id == store.id)).all()
-    assert len(runs) == 4 and all(r.observation_type == "product_extraction" for r in runs)
+    runs = db.scalars(select(StoreObservation).where(StoreObservation.store_id == store.id, StoreObservation.observation_type == "product_extraction")).all()
+    assert len(runs) == 4
 
 
 def test_page_budget_is_respected(db):
