@@ -200,7 +200,7 @@ def tick(
     backlog = db.execute(
         select(Domain.id, Domain.normalized_domain)
         .where(Domain.verification_status == "pending", ~any_verify, Domain.suppressed_at.is_(None))
-        .order_by(Domain.first_seen_at)
+        .order_by(Domain.backlog_rank, Domain.first_seen_at)  # high-yield sources first (M10)
         .limit(budget)
     ).all()
     out["backlog_verifications"] = _queue(db, backlog, 7, enqueue_verify)

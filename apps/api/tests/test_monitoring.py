@@ -255,3 +255,33 @@ def test_monitoring_api(client, monkeypatch):
     sent = []
     monkeypatch.setattr(tasks.monitoring_tick, "delay", lambda: sent.append(1))
     assert client.post("/api/v1/monitoring/tick").status_code == 202 and sent == [1]
+
+
+def test_backlog_prefers_better_ranked_sources(db, big_limits, monkeypatch):
+    """M10: candidates from high-yield sources are verified first, regardless of age."""
+    from app.models import DiscoveredUrl
+    from app.services import discovery
+    from app.sources import Found
+
+    monkeypatch.setattr(settings, "monitor_backlog_per_tick", 1)
+    monkeypatch.setattr(settings, "monitor_candidate_rechecks_per_tick", 0)  # backlog pick is the last job queued
+    tag = uuid.uuid4().hex[:6]
+    good = DiscoverySource(name=f"good-{tag}", source_type="urlscan", configuration={"backlog_rank": 0}, state={})
+    meh = DiscoverySource(name=f"meh-{tag}", source_type="commoncrawl", configuration={"backlog_rank": 9}, state={})
+    db.add_all([good, meh])
+    db.commit()
+    old = f"old{tag}.example"
+    discovery.ingest(db, meh.id, discovery.start_run(db, meh), [Found(f"https://{old}/", datetime(2001, 1, 1, tzinfo=UTC))], 0, lambda j: None)
+    fresh = f"fresh{tag}.example"
+    discovery.ingest(db, good.id, discovery.start_run(db, good), [Found(f"https://{fresh}/")], 0, lambda j: None)
+    out, calls = run_tick(db)
+    picked = db.get(CrawlJob, calls["verify"][-1]).target_domain if calls["verify"] else None
+    assert picked == fresh  # rank 0 beats a 25-year-older rank-9 candidate
+
+    # re-found by the better source ⇒ rank improves
+    discovery.ingest(db, good.id, discovery.start_run(db, good) or db.scalars(select(DiscoveryRun).where(DiscoveryRun.source_id == good.id)).first(),
+                     [Found(f"https://{old}/")], 0, lambda j: None)  # fmt: skip
+    assert db.scalar(select(Domain.backlog_rank).where(Domain.normalized_domain == old)) == 0
+    for run in db.scalars(select(DiscoveryRun).where(DiscoveryRun.source_id.in_((good.id, meh.id)))):
+        run.status = "cancelled"
+    db.commit()

@@ -116,6 +116,6 @@ def test_compaction_keeps_latest_and_recent_evidence(db):
 
 def test_scale_indexes_exist():
     names = {i["name"] for i in inspect(engine).get_indexes("domains")} | {i["name"] for i in inspect(engine).get_indexes("crawl_jobs")}
-    assert {"ix_domains_pending_first_seen", "ix_crawl_jobs_domain_type_status"} <= names
+    assert {"ix_domains_pending_rank_first_seen", "ix_crawl_jobs_domain_type_status"} <= names
     with SessionLocal() as s:
         assert s.scalar(select(func.count()).select_from(Domain)) is not None

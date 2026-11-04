@@ -111,9 +111,9 @@ class Domain(Base):
     """A candidate domain. Becomes a Store only after passing verification."""
 
     __tablename__ = "domains"
-    # Backlog pick (monitoring tick): pending domains oldest-first without scanning all pending rows.
+    # Backlog pick (monitoring tick): best-ranked source first, then oldest, without scanning all pending rows.
     __table_args__ = (
-        Index("ix_domains_pending_first_seen", "first_seen_at",
+        Index("ix_domains_pending_rank_first_seen", "backlog_rank", "first_seen_at",
               postgresql_where=text("verification_status = 'pending'"), sqlite_where=text("verification_status = 'pending'")),
     )  # fmt: skip
     id: Mapped[uuid.UUID] = _pk()
@@ -124,6 +124,9 @@ class Domain(Base):
     # Latest verification outcome; full evidence per check lives in crawl_jobs.result.
     verification_status: Mapped[str] = mapped_column(String(30), default="pending", server_default="pending", index=True)
     verification_confidence: Mapped[float | None] = mapped_column(Float)
+    # Verification order for never-checked candidates: lower = sooner. Set from the best-ranked
+    # source that found the domain (source configuration "backlog_rank"; M10, measured yields).
+    backlog_rank: Mapped[int] = mapped_column(Integer, default=5, server_default="5")
     last_checked_at: Mapped[datetime | None] = _opt_ts(index=True)
     # Opt-out / suppression (spec §16): never crawled again, hidden from the directory.
     suppressed_at: Mapped[datetime | None] = _opt_ts(index=True)

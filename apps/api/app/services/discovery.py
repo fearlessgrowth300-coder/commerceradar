@@ -6,7 +6,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from urllib.parse import urlsplit, urlunsplit
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
@@ -69,6 +69,8 @@ def ingest(
         return {"urls": 0, "invalid": invalid, "new_domains": 0, "queued": 0, "suppressed": dropped}
 
     hosts = sorted({h for h, _ in urls.values()})
+    source = db.get(DiscoverySource, source_id)
+    rank = int((source.configuration or {}).get("backlog_rank", 5)) if source else 5
     first_seen = {}
     for h, seen in urls.values():
         first_seen[h] = min(first_seen.get(h, seen), seen)
@@ -76,7 +78,7 @@ def ingest(
     # Domains: insert the unseen ones; RETURNING tells us exactly which were new (race-safe).
     rows = [
         {"id": uuid.uuid4(), "normalized_domain": h, "first_seen_at": first_seen[h], "last_seen_at": now,
-         "created_at": now, "updated_at": now, "verification_status": "pending"}
+         "created_at": now, "updated_at": now, "verification_status": "pending", "backlog_rank": rank}
         for h in hosts
     ]  # fmt: skip
     new: dict[str, uuid.UUID] = {}
@@ -85,6 +87,8 @@ def ingest(
         stmt = _insert(db, Domain).values(chunk).on_conflict_do_nothing(index_elements=["normalized_domain"])
         new.update(db.execute(stmt.returning(Domain.normalized_domain, Domain.id)).tuples().all())
     for chunk in _chunks(hosts):
+        # a better-ranked source re-finding a known pending candidate moves it forward
+        db.execute(update(Domain).where(Domain.normalized_domain.in_(chunk), Domain.backlog_rank > rank).values(backlog_rank=rank))
         ids.update(db.execute(select(Domain.normalized_domain, Domain.id).where(Domain.normalized_domain.in_(chunk))).tuples().all())
 
     url_rows = (
