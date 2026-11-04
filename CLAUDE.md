@@ -6,7 +6,9 @@ The core asset is the **database** (quality, coverage, freshness, history), not 
 ## Status
 - M1 Foundation: done.
 - M2 Domain ingestion + verification: done (61 tests on Postgres; live-checked on VPS 2026-11-04). Known limit: no JS rendering — JS-only storefronts come out `uncertain`.
-- Next: M3 platform detection.
+- M3 Platform detection: done (78 tests; live: allbirds.com → shopify 1.0). Rules in `app/services/platforms.py` (one rule list per platform; weak/ambiguous ⇒ unknown, confirmed store w/o fingerprint ⇒ custom 0.3). Only runs for confirmed/probable stores.
+- Known limits: bot walls (403/429) ⇒ uncertain (not bypassed); stores whose homepage lacks cart/structured data (e.g. camelbak.com, SFCC) ⇒ uncertain; no JS rendering.
+- Next: M4 discovery source integrations.
 
 ## Layout
 - `apps/api/app` — FastAPI + SQLAlchemy + Celery in ONE package (modular monolith). API = `uvicorn app.main:app`, worker = `celery -A app.worker worker`. Same image, different command, so workers can move to other machines later.
