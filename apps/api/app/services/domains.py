@@ -83,7 +83,9 @@ def submit_domain(db: Session, raw: str, enqueue) -> tuple[Domain, CrawlJob, boo
     host = normalize_domain(raw)
     now = datetime.now(UTC)
     domain = db.scalar(select(Domain).where(Domain.normalized_domain == host))
-    if domain is not None and domain.suppressed_at is not None:
+    from app.services import suppression
+
+    if (domain is not None and domain.suppressed_at is not None) or suppression.is_suppressed(db, host):
         raise InvalidDomain("this domain has opted out and is not crawled")
     created = domain is None
     if created:
@@ -122,7 +124,7 @@ def submit_domain(db: Session, raw: str, enqueue) -> tuple[Domain, CrawlJob, boo
 
 
 def list_domains(db: Session, status: str | None, q: str | None, page: int, page_size: int):
-    stmt = select(Domain)
+    stmt = select(Domain).where(Domain.suppressed_at.is_(None))  # opt-outs: admin list only
     if status:
         stmt = stmt.where(Domain.verification_status == status)
     if q:
@@ -136,7 +138,7 @@ def list_domains(db: Session, status: str | None, q: str | None, page: int, page
 
 def get_domain_detail(db: Session, domain_id: uuid.UUID):
     domain = db.get(Domain, domain_id)
-    if not domain:
+    if not domain or domain.suppressed_at is not None:
         return None
     jobs = db.scalars(
         select(CrawlJob).where(CrawlJob.domain_id == domain_id).order_by(CrawlJob.scheduled_at.desc()).limit(20)

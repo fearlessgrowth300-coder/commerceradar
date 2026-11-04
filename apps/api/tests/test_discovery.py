@@ -131,7 +131,7 @@ def test_ingest_respects_budget_and_skips_known_domains(db, client, monkeypatch)
     stats = discovery.ingest(
         db, src.id, run, [Found(f"https://{h}/") for h in [known, *new]] + [Found("https://localhost/")], 3, queued.append
     )
-    assert stats == {"urls": 6, "invalid": 1, "new_domains": 5, "queued": 3}
+    assert stats == {"urls": 6, "invalid": 1, "new_domains": 5, "queued": 3, "suppressed": 0}
     assert len(queued) == 3
     known_jobs = db.scalar(select(func.count()).select_from(CrawlJob).where(CrawlJob.target_domain == known))
     assert known_jobs == 1  # only the manual one

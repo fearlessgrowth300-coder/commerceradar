@@ -281,7 +281,7 @@ def list_store_products(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ):
-    if not db.get(Store, store_id):
+    if not stores.visible_store(db, store_id):
         raise HTTPException(404, "store not found")
     items, total = products.list_products(db, store_id, status, page, page_size)
     return {"items": items, "total": total, "page": page, "page_size": page_size}
@@ -290,7 +290,7 @@ def list_store_products(
 @router.get("/products/{product_id}", response_model=ProductDetail)
 def get_product(product_id: uuid.UUID, db: Session = Depends(get_db)):
     product = db.get(Product, product_id)
-    if not product:
+    if not product or not stores.visible_store(db, product.store_id):
         raise HTTPException(404, "product not found")
     return {"product": product, "history": products.product_history(db, product_id)}
 
@@ -476,7 +476,7 @@ def store_observations(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ):
-    if not db.get(Store, store_id):
+    if not stores.visible_store(db, store_id):
         raise HTTPException(404, "store not found")
     items, total = stores.observations(db, store_id, type, page, page_size)
     return {"items": items, "total": total, "page": page, "page_size": page_size}

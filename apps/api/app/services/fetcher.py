@@ -41,6 +41,9 @@ class SafeFetcher:
     ):
         self.resolver = resolver
         self.max_bytes = max_bytes
+        # Opt-out guard (M10): callable(host) -> True when the host must never be fetched.
+        # Checked on every hop, so redirects into a suppressed domain are refused too.
+        self.blocked = None
         self.client = httpx.Client(
             transport=transport,
             timeout=httpx.Timeout(timeout, connect=min(timeout, 15.0) if timeout > 10 else 5.0),
@@ -84,6 +87,8 @@ class SafeFetcher:
         if port not in ALLOWED_PORTS:
             raise BlockedDestination(f"port {port} not allowed")
         host = parts.hostname
+        if self.blocked is not None and self.blocked(host):
+            raise BlockedDestination(f"{host} is suppressed (opt-out)")
         try:
             ipaddress.ip_address(host)
             raise BlockedDestination("IP-literal URLs not allowed")

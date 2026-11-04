@@ -14,7 +14,7 @@ from app.api.deps import Ctx, admin, current
 from app.config import settings
 from app.db import get_db
 from app.models import Organization, SavedSearch, User
-from app.services import accounts, billing, domains, metrics, workspace
+from app.services import accounts, billing, domains, metrics, suppression, workspace
 
 public = APIRouter(prefix="/api/v1")
 router = APIRouter(prefix="/api/v1")
@@ -233,25 +233,33 @@ def patch_user(user_id: uuid.UUID, body: UserPatch, ctx: Ctx = Depends(admin), d
 @router.get("/admin/suppressions", dependencies=[Depends(admin)])
 def suppressions(db: Session = Depends(get_db)):
     return [{"domain": d.normalized_domain, "reason": d.suppression_reason, "suppressed_at": d.suppressed_at}
-            for d in workspace.list_suppressed(db)]  # fmt: skip
+            for d in suppression.listed(db)]  # fmt: skip
 
 
-@router.post("/admin/suppressions", status_code=201, dependencies=[Depends(admin)])
-def suppress(body: SuppressIn, db: Session = Depends(get_db)):
+@router.get("/admin/suppressions/events", dependencies=[Depends(admin)])
+def suppression_events(db: Session = Depends(get_db)):
+    return [{"domain": e.domain, "action": e.action, "reason": e.reason, "actor_user_id": e.actor_user_id,
+             "subdomains": e.subdomains, "created_at": e.created_at} for e in suppression.events(db)]  # fmt: skip
+
+
+@router.post("/admin/suppressions", status_code=201)
+def suppress(body: SuppressIn, ctx: Ctx = Depends(admin), db: Session = Depends(get_db)):
     try:
         host = domains.normalize_domain(body.domain)
     except domains.InvalidDomain as e:
         raise HTTPException(422, str(e)) from e
-    d = workspace.suppress_domain(db, host, body.reason)
+    d = suppression.suppress(db, host, body.reason, ctx.user.id)
     return {"domain": d.normalized_domain, "suppressed_at": d.suppressed_at}
 
 
-@router.delete("/admin/suppressions/{domain}", status_code=204, dependencies=[Depends(admin)])
-def unsuppress(domain: str, db: Session = Depends(get_db)):
+@router.delete("/admin/suppressions/{domain}", status_code=204)
+def unsuppress(domain: str, ctx: Ctx = Depends(admin), db: Session = Depends(get_db)):
     try:
-        workspace.unsuppress_domain(db, domains.normalize_domain(domain))
-    except (workspace.NotFound, domains.InvalidDomain) as e:
+        host = domains.normalize_domain(domain)
+    except domains.InvalidDomain as e:
         raise HTTPException(404, "not suppressed") from e
+    if suppression.unsuppress(db, host, ctx.user.id) is None:
+        raise HTTPException(404, "not suppressed")
 
 
 

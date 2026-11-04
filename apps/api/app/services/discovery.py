@@ -12,6 +12,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.models import CrawlJob, DiscoveredUrl, DiscoveryRun, DiscoverySource, Domain
+from app.services import suppression
 from app.services.domains import InvalidDomain, normalize_domain
 from app.sources import Found
 
@@ -59,8 +60,13 @@ def ingest(
             invalid += 1
             continue
         urls.setdefault(n[0], (n[1], f.seen_at or now))
+    roots = suppression.suppressed_roots(db)
+    dropped = 0
+    if roots:  # opt-outs are excluded before anything is recorded (incl. subdomains)
+        keep = {u: v for u, v in urls.items() if not suppression.matches(v[0], roots)}
+        dropped, urls = len(urls) - len(keep), keep
     if not urls:
-        return {"urls": 0, "invalid": invalid, "new_domains": 0, "queued": 0}
+        return {"urls": 0, "invalid": invalid, "new_domains": 0, "queued": 0, "suppressed": dropped}
 
     hosts = sorted({h for h, _ in urls.values()})
     first_seen = {}
@@ -118,7 +124,7 @@ def ingest(
             job.status = "failed"
             job.error_message = f"queue unavailable: {type(e).__name__}"
     db.commit()
-    return {"urls": len(urls), "invalid": invalid, "new_domains": len(new), "queued": len(jobs)}
+    return {"urls": len(urls), "invalid": invalid, "new_domains": len(new), "queued": len(jobs), "suppressed": dropped}
 
 
 def start_run(db: Session, source: DiscoverySource) -> DiscoveryRun | None:

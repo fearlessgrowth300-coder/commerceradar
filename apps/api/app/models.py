@@ -370,3 +370,16 @@ class UsageCounter(Base):
     metric: Mapped[str] = mapped_column(String(50))  # exports | export_rows
     period: Mapped[str] = mapped_column(String(7))  # YYYY-MM
     count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class SuppressionEvent(Base):
+    """Append-only audit trail of opt-out changes (M10). Survives un-suppression."""
+
+    __tablename__ = "suppression_events"
+    id: Mapped[uuid.UUID] = _pk()
+    domain: Mapped[str] = mapped_column(String(253), index=True)
+    action: Mapped[str] = mapped_column(String(20))  # suppress | unsuppress
+    reason: Mapped[str | None] = mapped_column(String(300))
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    subdomains: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = _ts(index=True)

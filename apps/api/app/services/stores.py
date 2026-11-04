@@ -113,7 +113,8 @@ def observations(db: Session, store_id: uuid.UUID, kind: str | None, page: int, 
 def platform_distribution(db: Session) -> list[dict]:
     q = (
         select(Store.primary_platform, func.count())
-        .where(Store.ecommerce_status.in_(("confirmed_ecommerce", "probable_ecommerce")))
+        .join(Domain, Domain.id == Store.domain_id)
+        .where(Store.ecommerce_status.in_(("confirmed_ecommerce", "probable_ecommerce")), Domain.suppressed_at.is_(None))
         .group_by(Store.primary_platform)
         .order_by(func.count().desc())
     )
@@ -126,7 +127,7 @@ def recent_changes(db: Session, limit: int = 15) -> list[dict]:
         select(StoreObservation, Domain.normalized_domain)
         .join(Store, Store.id == StoreObservation.store_id)
         .join(Domain, Domain.id == Store.domain_id)
-        .where(StoreObservation.observation_type.in_(kinds))
+        .where(StoreObservation.observation_type.in_(kinds), Domain.suppressed_at.is_(None))
         .order_by(StoreObservation.observed_at.desc())
         .limit(limit)
     )
@@ -134,3 +135,11 @@ def recent_changes(db: Session, limit: int = 15) -> list[dict]:
         {"store_id": o.store_id, "domain": d, "type": o.observation_type, "data": o.observation_data, "observed_at": o.observed_at}
         for o, d in db.execute(q).all()
     ]
+
+
+def visible_store(db: Session, store_id: uuid.UUID) -> Store | None:
+    """The store, unless it does not exist or its domain opted out."""
+    store = db.get(Store, store_id)
+    if store is None:
+        return None
+    return None if db.scalar(select(Domain.suppressed_at).where(Domain.id == store.domain_id)) else store

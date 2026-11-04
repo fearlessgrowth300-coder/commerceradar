@@ -148,35 +148,6 @@ def _safe(v: str | None) -> str:
 # ---------- admin ----------
 
 
-def suppress_domain(db: Session, host: str, reason: str) -> Domain:
-    d = db.scalar(select(Domain).where(Domain.normalized_domain == host))
-    if d is None:
-        d = Domain(normalized_domain=host)  # pre-emptive opt-out: never crawl it
-        db.add(d)
-        db.flush()
-    d.suppressed_at, d.suppression_reason = datetime.now(UTC), reason.strip()[:300] or "opt-out"
-    db.execute(
-        update(CrawlJob)
-        .where(CrawlJob.domain_id == d.id, CrawlJob.status.in_(("queued", "retrying")))
-        .values(status="failed", error_message="domain suppressed (opt-out)")
-    )
-    db.commit()
-    return d
-
-
-def unsuppress_domain(db: Session, host: str) -> Domain:
-    d = db.scalar(select(Domain).where(Domain.normalized_domain == host))
-    if d is None:
-        raise NotFound()
-    d.suppressed_at, d.suppression_reason = None, None
-    db.commit()
-    return d
-
-
-def list_suppressed(db: Session) -> list[Domain]:
-    return list(db.scalars(select(Domain).where(Domain.suppressed_at.is_not(None)).order_by(Domain.suppressed_at.desc())))
-
-
 def admin_overview(db: Session) -> dict:
     orgs = db.execute(
         select(Organization, func.count(Membership.id))

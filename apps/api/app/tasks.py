@@ -9,7 +9,7 @@ from app import sources
 from app.db import SessionLocal
 from app.config import settings
 from app.models import CrawlJob, DiscoveryRun, DiscoverySource, Store
-from app.services import discovery, products, verification
+from app.services import discovery, products, suppression, verification
 from app.services.fetcher import FetchError, SafeFetcher
 from app.worker import celery_app
 
@@ -21,7 +21,7 @@ def _suppressed(db: Session, domain_id) -> bool:
     from app.models import Domain
 
     d = db.get(Domain, domain_id) if domain_id else None
-    return bool(d and d.suppressed_at)
+    return bool(d and (d.suppressed_at or suppression.is_suppressed(db, d.normalized_domain)))
 
 
 def _fail(db: Session, job_id: uuid.UUID, e: Exception) -> str:
@@ -52,6 +52,7 @@ def verify_domain(self, job_id: str) -> str:
         db.commit()
 
         fetcher = SafeFetcher()
+        fetcher.blocked = suppression.guard(db)
         try:
             result = verification.verify(job.target_domain, fetcher)
         except FetchError as e:
@@ -130,6 +131,7 @@ def run_discovery_batch(self, run_id: str, seq: int) -> str:
         cursor = _unclaimed(run.cursor)
         state = dict(source.state or {})
         fetcher = SafeFetcher(max_bytes=adapter.max_bytes, timeout=adapter.timeout)
+        fetcher.blocked = suppression.guard(db)
         try:
             batch = adapter.fetch_batch(config, cursor, state, sources.Ctx(fetcher, db))
         except FetchError as e:  # transient: same batch again later, cursor untouched
@@ -212,6 +214,7 @@ def extract_products(self, job_id: str) -> str:
         db.commit()
 
         fetcher = SafeFetcher()
+        fetcher.blocked = suppression.guard(db)
         try:
             stats = products.extract_store(db, store, fetcher, settings.product_pages_per_run, settings.product_page_delay)
         except FetchError as e:
