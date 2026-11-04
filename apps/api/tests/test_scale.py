@@ -45,7 +45,8 @@ def test_job_stats_from_records(db):
     job(db, d, done=future, secs=5, status="failed", attempts=3)
     st = metrics.job_stats(db, future + timedelta(seconds=1), hours=1)["verify"]
     assert (st["completed"], st["succeeded"], st["failed"], st["retried"]) == (5, 4, 1, 1)
-    assert st["avg_seconds"] == 25.0 and st["per_hour"] == 5.0
+    assert st["avg_seconds"] == 25.0
+    assert st["observed_hours"] == 0.25 and st["per_hour"] == 20.0  # 5 jobs seen over the minimum 15-minute span
 
 
 def test_source_yield(db):

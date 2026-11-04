@@ -32,6 +32,12 @@ def job_stats(db: Session, now: datetime, hours: int = 24) -> dict:
         .where(CrawlJob.completed_at >= since)
     ).all()
     out: dict[str, dict] = {}
+    # Rate over the time actually observed: a system that started 3 h ago must not be averaged over 24 h.
+    first = min((r.completed_at for r in rows), default=None)
+    if first is not None and first.tzinfo is None:
+        first = first.replace(tzinfo=UTC)
+    span_h = max((now - first).total_seconds() / 3600, 0.25) if first else hours
+    span_h = min(span_h, hours)
     for jt in sorted({r.job_type for r in rows}):
         mine = [r for r in rows if r.job_type == jt]
         durs = [(r.completed_at - r.started_at).total_seconds() for r in mine if r.started_at and r.status == "succeeded"]
@@ -39,7 +45,8 @@ def job_stats(db: Session, now: datetime, hours: int = 24) -> dict:
             "completed": len(mine),
             "succeeded": sum(r.status == "succeeded" for r in mine),
             "failed": sum(r.status == "failed" for r in mine),
-            "per_hour": round(len(mine) / hours, 1),
+            "per_hour": round(len(mine) / span_h, 1),
+            "observed_hours": round(span_h, 2),
             "avg_seconds": round(statistics.fmean(durs), 1) if durs else None,
             "p50_seconds": _pct(durs, 0.5),
             "p95_seconds": _pct(durs, 0.95),
