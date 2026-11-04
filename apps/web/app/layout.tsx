@@ -13,6 +13,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/" className="font-semibold">CommerceRadar</Link>
             <Link href="/" className="text-slate-600 hover:text-slate-900">Dashboard</Link>
             <Link href="/discovery" className="text-slate-600 hover:text-slate-900">Discovery</Link>
+            <Link href="/sources" className="text-slate-600 hover:text-slate-900">Sources</Link>
           </nav>
         </header>
         <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>

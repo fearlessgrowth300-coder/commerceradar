@@ -7,8 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import CrawlJob
-from app.services import dashboard, domains
+from app.models import CrawlJob, DiscoveryRun, DiscoverySource
+from app.services import dashboard, discovery, domains
 
 router = APIRouter(prefix="/api/v1")
 
@@ -71,6 +71,36 @@ class DomainDetail(BaseModel):
     platform_confidence: float | None
 
 
+class RunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    source_id: uuid.UUID
+    status: str
+    started_at: datetime | None
+    completed_at: datetime | None
+    records_found: int
+    records_processed: int
+    records_failed: int
+    error_summary: str | None
+    cursor: dict[str, Any] | None  # includes "log" (last batch notes) and "verify_queued"
+
+
+class SourceOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    source_type: str
+    enabled: bool
+    configuration: dict[str, Any]
+    urls_discovered: int
+    last_run: RunOut | None
+
+
+def _enqueue_run(run_id: uuid.UUID, seq: int) -> None:
+    from app.tasks import run_discovery_batch
+
+    run_discovery_batch.delay(str(run_id), seq)
+
+
 def _enqueue(job_id: uuid.UUID) -> None:
     from app.tasks import verify_domain
 
@@ -128,3 +158,45 @@ def get_job(job_id: uuid.UUID, db: Session = Depends(get_db)):
     if not job:
         raise HTTPException(404, "job not found")
     return job
+
+
+@router.get("/discovery/sources", response_model=list[SourceOut])
+def list_sources(db: Session = Depends(get_db)):
+    return [
+        {**{k: getattr(src, k) for k in ("id", "name", "source_type", "enabled")},
+         "configuration": src.configuration or {}, "urls_discovered": urls, "last_run": last}
+        for src, last, urls in discovery.list_sources(db)
+    ]  # fmt: skip
+
+
+@router.post("/discovery/sources/{source_id}/runs", response_model=RunOut, status_code=202)
+def start_source_run(source_id: uuid.UUID, db: Session = Depends(get_db)):
+    source = db.get(DiscoverySource, source_id)
+    if not source:
+        raise HTTPException(404, "source not found")
+    try:
+        return discovery.launch_run(db, source, _enqueue_run)
+    except discovery.RunConflict as e:
+        raise HTTPException(409, str(e)) from e
+    except Exception as e:
+        raise HTTPException(503, "queue unavailable") from e
+
+
+@router.get("/discovery/runs", response_model=list[RunOut])
+def list_runs(
+    db: Session = Depends(get_db), source_id: uuid.UUID | None = None, limit: int = Query(20, ge=1, le=100)
+):
+    return discovery.list_runs(db, source_id, limit)
+
+
+@router.post("/discovery/runs/{run_id}/resume", response_model=RunOut, status_code=202)
+def resume_run(run_id: uuid.UUID, db: Session = Depends(get_db)):
+    run = db.get(DiscoveryRun, run_id)
+    if not run:
+        raise HTTPException(404, "run not found")
+    try:
+        return discovery.resume_run(db, run, _enqueue_run)
+    except discovery.RunConflict as e:
+        raise HTTPException(409, str(e)) from e
+    except Exception as e:
+        raise HTTPException(503, "queue unavailable") from e

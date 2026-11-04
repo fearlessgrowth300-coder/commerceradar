@@ -28,6 +28,7 @@ class FetchResult:
     redirects: list[str] = field(default_factory=list)
     headers: dict[str, str] = field(default_factory=dict)  # final response, lower-cased names
     set_cookies: list[str] = field(default_factory=list)  # every Set-Cookie seen along the redirect chain
+    body: bytes = b""  # raw bytes (e.g. gzip blocks); `text` is the decoded form
 
 
 class SafeFetcher:
@@ -47,11 +48,11 @@ class SafeFetcher:
             headers={"User-Agent": settings.bot_user_agent, "Accept": "text/html,application/xhtml+xml,*/*;q=0.5"},
         )
 
-    def fetch(self, url: str) -> FetchResult:
+    def fetch(self, url: str, headers: dict[str, str] | None = None) -> FetchResult:
         redirects: list[str] = []
         set_cookies: list[str] = []
         for _ in range(MAX_REDIRECTS + 1):
-            resp, text, truncated = self._fetch_once(url)
+            resp, body, truncated = self._fetch_once(url, headers or {})
             set_cookies += resp.headers.get_list("set-cookie")
             if resp.is_redirect and "location" in resp.headers:
                 url = urljoin(url, resp.headers["location"])
@@ -63,15 +64,16 @@ class SafeFetcher:
                 url=url,
                 status=resp.status_code,
                 content_type=resp.headers.get("content-type", "").lower(),
-                text=text,
+                text=body.decode(resp.encoding or "utf-8", errors="replace"),
                 truncated=truncated,
                 redirects=redirects,
                 headers={k.lower(): v for k, v in resp.headers.items() if k.lower() != "set-cookie"},
                 set_cookies=set_cookies,
+                body=body,
             )
         raise BlockedDestination(f"more than {MAX_REDIRECTS} redirects")
 
-    def _fetch_once(self, url: str) -> tuple[httpx.Response, str, bool]:
+    def _fetch_once(self, url: str, headers: dict[str, str]) -> tuple[httpx.Response, bytes, bool]:
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
             raise BlockedDestination(f"unsupported URL {url!r}")
@@ -96,7 +98,7 @@ class SafeFetcher:
 
         try:
             with self.client.stream(
-                "GET", pinned, headers={"Host": host_header}, extensions={"sni_hostname": host}
+                "GET", pinned, headers={**headers, "Host": host_header}, extensions={"sni_hostname": host}
             ) as resp:
                 body = bytearray()
                 truncated = False
@@ -106,7 +108,6 @@ class SafeFetcher:
                         truncated = True
                         del body[self.max_bytes :]
                         break
-                text = body.decode(resp.encoding or "utf-8", errors="replace")
-                return resp, text, truncated
+                return resp, bytes(body), truncated
         except httpx.HTTPError as e:
             raise FetchError(f"{type(e).__name__} fetching {url}") from e
