@@ -3,7 +3,7 @@
 Branch `m10-discovery-quality` (deployed on the VPS, commit `965683c`, migrations up to 0015). **Not merged into `main`.**
 
 ## 1. Shopify ingestion (measured)
-- 17,028 `*.myshopify.com` hosts; 198 processed, 16,830 remaining (~250 verifications/h, 0 failures, avg 13 s).
+- 17,028 `*.myshopify.com` hosts from Common Crawl CC-MAIN-2026-43.
 - Representative sample: 300 hosts chosen by seeded hash across the whole range, prioritised; **all 300 processed by 22:15 UTC**:
 
   | Outcome | n | share |
@@ -42,6 +42,6 @@ Measured 11/11 `*.mybigcommerce.com` storefronts send server-set `x-bc-store-id`
   and off-server copies of backups; merge into `main` (fast-forward) after owner approval.
 
 ## 7. Remaining
-2. Human labelling of the 197-domain queue → first precision/recall.
-3. Owner decisions: urlscan data, backup cron, merge approval.
-4. `.store` expansion after (1).
+1. Human labelling of the 197-domain queue → first precision/recall.
+2. Owner decisions: urlscan data, backup cron, merge approval.
+3. `.store` expansion once the myshopify backlog (~16.6k, ≈ 3 days at 240/h) is mostly processed.
