@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { StatusBadge } from "@/components/StatusBadge";
-import { API_URL, type Domain, fmtDate, getJson, STATUS_LABEL } from "@/lib/api";
+import { apiFetch, type Domain, fmtDate, getJson, STATUS_LABEL } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -10,11 +10,10 @@ async function submit(formData: FormData) {
   const domain = String(formData.get("domain") ?? "");
   let error = "";
   try {
-    const res = await fetch(`${API_URL}/api/v1/discovery/domains`, {
+    const res = await apiFetch("/api/v1/discovery/domains", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ domain }),
-      cache: "no-store",
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));

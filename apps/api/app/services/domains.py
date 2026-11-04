@@ -83,6 +83,8 @@ def submit_domain(db: Session, raw: str, enqueue) -> tuple[Domain, CrawlJob, boo
     host = normalize_domain(raw)
     now = datetime.now(UTC)
     domain = db.scalar(select(Domain).where(Domain.normalized_domain == host))
+    if domain is not None and domain.suppressed_at is not None:
+        raise InvalidDomain("this domain has opted out and is not crawled")
     created = domain is None
     if created:
         domain = Domain(normalized_domain=host)

@@ -1,0 +1,203 @@
+"""Tenant features (M8): saved searches, alerts, CSV exports; admin: suppression and overview.
+
+Saved-search filters are exactly the store-directory filters, validated against the same
+whitelist, so an alert matches what the user saw in the directory.
+"""
+
+import csv
+import io
+import uuid
+from datetime import UTC, datetime
+
+from sqlalchemy import func, select, update
+from sqlalchemy.orm import Session
+
+from app.models import (Alert, AuthSession, CrawlJob, Domain, Membership, Organization, SavedSearch, Store, User,
+                        UsageCounter)  # fmt: skip
+from app.services import billing, stores
+
+FILTER_KEYS = ("q", "platform", "activity", "ecommerce_status", "signal", "verified_from", "verified_to", "sort")
+EXPORT_COLUMNS = ("domain", "store_name", "primary_platform", "platform_confidence", "ecommerce_status", "activity_status",
+                  "first_verified_at", "last_verified_at", "products_observed")  # fmt: skip
+
+
+class NotFound(Exception):
+    pass
+
+
+def clean_filters(raw: dict) -> dict:
+    out = {k: str(v)[:253] for k, v in (raw or {}).items() if k in FILTER_KEYS and v not in (None, "")}
+    for k in ("verified_from", "verified_to"):
+        if k in out:
+            out[k] = datetime.fromisoformat(out[k]).isoformat()  # ValueError → 422 upstream
+    return out
+
+
+def _query_kwargs(filters: dict) -> dict:
+    kw = {k: v for k, v in filters.items() if k not in ("verified_from", "verified_to")}
+    for k in ("verified_from", "verified_to"):
+        if k in filters:
+            dt = datetime.fromisoformat(filters[k])
+            kw[k] = dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+    return kw
+
+
+# ---------- saved searches + alerts ----------
+
+
+def create_search(db: Session, org: Organization, user: User, name: str, filters: dict, alerts: bool) -> SavedSearch:
+    billing.check_saved_search(db, org, alerts)
+    s = SavedSearch(organization_id=org.id, user_id=user.id, name=name.strip()[:200] or "Saved search",
+                    filters=clean_filters(filters), alerts_enabled=alerts,
+                    last_alert_check_at=datetime.now(UTC))  # alerts cover stores verified from now on  # fmt: skip
+    db.add(s)
+    db.commit()
+    return s
+
+
+def get_search(db: Session, org: Organization, search_id: uuid.UUID) -> SavedSearch:
+    s = db.get(SavedSearch, search_id)
+    if s is None or s.organization_id != org.id:  # tenant isolation: other orgs' rows look nonexistent
+        raise NotFound()
+    return s
+
+
+def delete_search(db: Session, org: Organization, search_id: uuid.UUID) -> None:
+    s = get_search(db, org, search_id)
+    db.query(Alert).filter(Alert.saved_search_id == s.id).delete()
+    db.delete(s)
+    db.commit()
+
+
+def run_alerts(db: Session, now: datetime, limit_per_search: int = 200) -> int:
+    """Create alerts for stores first verified since each search's last check. Idempotent."""
+    created = 0
+    for s in db.scalars(select(SavedSearch).where(SavedSearch.alerts_enabled.is_(True))):
+        org = db.get(Organization, s.organization_id)
+        if not billing.plan_of(org)["alerts"]:
+            continue
+        since = s.last_alert_check_at or s.created_at
+        since = since if since.tzinfo else since.replace(tzinfo=UTC)
+        kw = _query_kwargs(s.filters or {})
+        kw["verified_from"] = max(kw.get("verified_from") or since, since)
+        kw.pop("sort", None)
+        rows, _ = stores.list_stores(db, **kw, sort="newest", page=1, page_size=limit_per_search)
+        seen = set(db.scalars(select(Alert.store_id).where(Alert.saved_search_id == s.id)))
+        for store, _domain, _n in rows:
+            if store.id not in seen:
+                db.add(Alert(organization_id=s.organization_id, saved_search_id=s.id, store_id=store.id, created_at=now))
+                created += 1
+        s.last_alert_check_at = now
+        db.commit()
+    return created
+
+
+def list_alerts(db: Session, org: Organization, unread_only: bool, limit: int = 100):
+    q = (
+        select(Alert, SavedSearch.name, Domain.normalized_domain, Store.store_name)
+        .join(SavedSearch, SavedSearch.id == Alert.saved_search_id)
+        .join(Store, Store.id == Alert.store_id)
+        .join(Domain, Domain.id == Store.domain_id)
+        .where(Alert.organization_id == org.id)
+    )
+    if unread_only:
+        q = q.where(Alert.read_at.is_(None))
+    return db.execute(q.order_by(Alert.created_at.desc()).limit(limit)).all()
+
+
+def mark_alerts_read(db: Session, org: Organization) -> int:
+    r = db.execute(update(Alert).where(Alert.organization_id == org.id, Alert.read_at.is_(None)).values(read_at=datetime.now(UTC)))
+    db.commit()
+    return r.rowcount or 0
+
+
+# ---------- exports ----------
+
+
+def export_csv(db: Session, org: Organization, filters: dict) -> tuple[str, int, bool]:
+    """→ (csv text, rows, truncated). Counts against the plan's monthly export quota."""
+    kw = _query_kwargs(clean_filters(filters))
+    _, total = stores.list_stores(db, **kw, page=1, page_size=1)
+    allowed = billing.check_export(db, org, total)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(EXPORT_COLUMNS)
+    written, page = 0, 1
+    while written < allowed:
+        rows, _ = stores.list_stores(db, **kw, page=page, page_size=1000)
+        if not rows:
+            break
+        for st, dom, n in rows[: allowed - written]:
+            w.writerow([dom, _safe(st.store_name), st.primary_platform, st.platform_confidence, st.ecommerce_status,
+                        st.activity_status, st.first_verified_at and st.first_verified_at.isoformat(),
+                        st.last_verified_at and st.last_verified_at.isoformat(), n])  # fmt: skip
+            written += 1
+        page += 1
+    billing.add_usage(db, org, "exports")
+    billing.add_usage(db, org, "export_rows", written)
+    db.commit()
+    return buf.getvalue(), written, total > written
+
+
+def _safe(v: str | None) -> str:
+    """CSV/formula injection guard: spreadsheet apps execute cells starting with = + - @."""
+    v = v or ""
+    return "'" + v if v[:1] in ("=", "+", "-", "@", "\t", "\r") else v
+
+
+# ---------- admin ----------
+
+
+def suppress_domain(db: Session, host: str, reason: str) -> Domain:
+    d = db.scalar(select(Domain).where(Domain.normalized_domain == host))
+    if d is None:
+        d = Domain(normalized_domain=host)  # pre-emptive opt-out: never crawl it
+        db.add(d)
+        db.flush()
+    d.suppressed_at, d.suppression_reason = datetime.now(UTC), reason.strip()[:300] or "opt-out"
+    db.execute(
+        update(CrawlJob)
+        .where(CrawlJob.domain_id == d.id, CrawlJob.status.in_(("queued", "retrying")))
+        .values(status="failed", error_message="domain suppressed (opt-out)")
+    )
+    db.commit()
+    return d
+
+
+def unsuppress_domain(db: Session, host: str) -> Domain:
+    d = db.scalar(select(Domain).where(Domain.normalized_domain == host))
+    if d is None:
+        raise NotFound()
+    d.suppressed_at, d.suppression_reason = None, None
+    db.commit()
+    return d
+
+
+def list_suppressed(db: Session) -> list[Domain]:
+    return list(db.scalars(select(Domain).where(Domain.suppressed_at.is_not(None)).order_by(Domain.suppressed_at.desc())))
+
+
+def admin_overview(db: Session) -> dict:
+    orgs = db.execute(
+        select(Organization, func.count(Membership.id))
+        .outerjoin(Membership, Membership.organization_id == Organization.id)
+        .group_by(Organization.id)
+        .order_by(Organization.created_at.desc())
+    ).all()
+    p = billing.period()
+    usage = {(u.organization_id, u.metric): u.count for u in db.scalars(select(UsageCounter).where(UsageCounter.period == p))}
+    users = db.scalars(select(User).order_by(User.created_at.desc()).limit(500)).all()
+    return {
+        "organizations": [
+            {"id": o.id, "name": o.name, "plan": o.plan, "subscription_status": o.subscription_status, "members": n,
+             "exports_this_month": usage.get((o.id, "exports"), 0), "created_at": o.created_at}
+            for o, n in orgs
+        ],
+        "users": [
+            {"id": u.id, "email": u.email, "name": u.name, "is_admin": u.is_admin, "is_active": u.is_active,
+             "last_login_at": u.last_login_at, "created_at": u.created_at}
+            for u in users
+        ],
+        "active_sessions": db.scalar(select(func.count()).select_from(AuthSession).where(AuthSession.expires_at > datetime.now(UTC))),
+        "suppressed_domains": db.scalar(select(func.count()).select_from(Domain).where(Domain.suppressed_at.is_not(None))),
+    }  # fmt: skip

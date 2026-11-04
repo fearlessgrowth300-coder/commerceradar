@@ -36,6 +36,7 @@ def list_stores(
         select(Store, Domain.normalized_domain, products)
         .join(Domain, Domain.id == Store.domain_id)
         .outerjoin(Product, (Product.store_id == Store.id) & (Product.status == "active"))
+        .where(Domain.suppressed_at.is_(None))
         .group_by(Store.id, Domain.normalized_domain)
     )
     if q:
@@ -70,6 +71,8 @@ def store_detail(db: Session, store_id: uuid.UUID):
     if store is None:
         return None
     domain = db.get(Domain, store.domain_id)
+    if domain.suppressed_at is not None:
+        return None  # opted out: not shown
     product_count = db.scalar(select(func.count()).select_from(Product).where(Product.store_id == store.id, Product.status == "active"))
     detections = db.scalars(
         select(PlatformDetection).where(PlatformDetection.store_id == store.id).order_by(PlatformDetection.detected_at.desc()).limit(5)

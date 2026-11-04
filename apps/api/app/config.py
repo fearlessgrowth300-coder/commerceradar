@@ -12,6 +12,15 @@ class Settings(BaseSettings):
     product_page_delay: float = 1.0  # seconds between product pages (robots Crawl-delay wins if larger)
     urlscan_api_key: str = ""
 
+    # ---- accounts / billing (M8) ----
+    session_days: int = 30
+    allow_registration: bool = True  # first registered user becomes platform admin
+    public_web_url: str = "http://localhost:3000"
+    stripe_secret_key: str = ""  # billing is disabled until all three are set
+    stripe_webhook_secret: str = ""
+    stripe_price_pro: str = ""
+    stripe_price_business: str = ""
+
     # ---- monitoring (spec §15); every interval is an env var, e.g. RECHECK_ACTIVE_DAYS=30 ----
     monitor_tick_seconds: int = 600  # how often the scheduler tick runs
     monitor_rechecks_per_tick: int = 10  # due stores re-verified per tick

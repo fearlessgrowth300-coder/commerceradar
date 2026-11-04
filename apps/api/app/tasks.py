@@ -17,6 +17,13 @@ log = logging.getLogger(__name__)
 MAX_RETRIES = 3
 
 
+def _suppressed(db: Session, domain_id) -> bool:
+    from app.models import Domain
+
+    d = db.get(Domain, domain_id) if domain_id else None
+    return bool(d and d.suppressed_at)
+
+
 def _fail(db: Session, job_id: uuid.UUID, e: Exception) -> str:
     log.exception("verification job %s failed", job_id)
     db.rollback()
@@ -35,6 +42,10 @@ def verify_domain(self, job_id: str) -> str:
         job = db.get(CrawlJob, jid)
         if job is None or job.status in ("succeeded", "failed"):
             return "skipped"  # idempotent: redelivered or duplicate message
+        if _suppressed(db, job.domain_id):
+            job.status, job.completed_at, job.error_message = "failed", datetime.now(UTC), "domain suppressed (opt-out)"
+            db.commit()
+            return "suppressed"
         job.status = "running"
         job.started_at = job.started_at or datetime.now(UTC)
         job.attempts += 1
@@ -194,6 +205,8 @@ def extract_products(self, job_id: str) -> str:
         store = db.scalar(select(Store).where(Store.domain_id == job.domain_id))
         if store is None:
             return _fail(db, jid, ValueError("no verified store for this domain"))
+        if _suppressed(db, job.domain_id):
+            return _fail(db, jid, ValueError("domain suppressed (opt-out)"))
         job.status, job.started_at = "running", job.started_at or datetime.now(UTC)
         job.attempts += 1
         db.commit()

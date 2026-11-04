@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { API_URL, fmtDate, getJson } from "@/lib/api";
+import { apiFetch, fmtDate, getJson } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +29,7 @@ const ACTIVE = ["queued", "running", "retrying"];
 async function post(path: string) {
   let error = "";
   try {
-    const res = await fetch(`${API_URL}${path}`, { method: "POST", cache: "no-store" });
+    const res = await apiFetch(path, { method: "POST" });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       error = typeof body.detail === "string" ? body.detail : `request failed (${res.status})`;

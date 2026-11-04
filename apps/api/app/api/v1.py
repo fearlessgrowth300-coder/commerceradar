@@ -7,11 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
+from app.api.deps import admin, current
 from app.db import get_db
 from app.models import CrawlJob, DiscoveryRun, DiscoverySource, Product, Store
 from app.services import dashboard, discovery, domains, monitoring, products, signals, stores
 
-router = APIRouter(prefix="/api/v1")
+router = APIRouter(prefix="/api/v1", dependencies=[Depends(current)])  # every route needs a session
 
 
 class Overview(BaseModel):
@@ -163,7 +164,7 @@ def dashboard_overview(db: Session = Depends(get_db)):
     return dashboard.overview(db)
 
 
-@router.post("/discovery/domains", response_model=SubmitOut, status_code=202)
+@router.post("/discovery/domains", response_model=SubmitOut, status_code=202, dependencies=[Depends(admin)])
 def submit_domain(body: DomainSubmit, db: Session = Depends(get_db)):
     try:
         domain, job, created = domains.submit_domain(db, body.domain, _enqueue)
@@ -225,7 +226,7 @@ def list_sources(db: Session = Depends(get_db)):
     ]  # fmt: skip
 
 
-@router.post("/discovery/sources/{source_id}/runs", response_model=RunOut, status_code=202)
+@router.post("/discovery/sources/{source_id}/runs", response_model=RunOut, status_code=202, dependencies=[Depends(admin)])
 def start_source_run(source_id: uuid.UUID, db: Session = Depends(get_db)):
     source = db.get(DiscoverySource, source_id)
     if not source:
@@ -245,7 +246,7 @@ def list_runs(
     return discovery.list_runs(db, source_id, limit)
 
 
-@router.post("/discovery/runs/{run_id}/resume", response_model=RunOut, status_code=202)
+@router.post("/discovery/runs/{run_id}/resume", response_model=RunOut, status_code=202, dependencies=[Depends(admin)])
 def resume_run(run_id: uuid.UUID, db: Session = Depends(get_db)):
     run = db.get(DiscoveryRun, run_id)
     if not run:
@@ -258,7 +259,7 @@ def resume_run(run_id: uuid.UUID, db: Session = Depends(get_db)):
         raise HTTPException(503, "queue unavailable") from e
 
 
-@router.post("/stores/{store_id}/products/extract", response_model=JobOut, status_code=202)
+@router.post("/stores/{store_id}/products/extract", response_model=JobOut, status_code=202, dependencies=[Depends(admin)])
 def extract_store_products(store_id: uuid.UUID, db: Session = Depends(get_db)):
     store = db.get(Store, store_id)
     if not store:
@@ -299,7 +300,7 @@ def monitoring_status(db: Session = Depends(get_db)):
     return monitoring.status(db, datetime.now(UTC))
 
 
-@router.post("/monitoring/tick", status_code=202)
+@router.post("/monitoring/tick", status_code=202, dependencies=[Depends(admin)])
 def monitoring_tick_now():
     """Run one scheduler tick now instead of waiting for beat."""
     from app.tasks import monitoring_tick
@@ -525,7 +526,7 @@ class RunStart(BaseModel):
     source_id: uuid.UUID
 
 
-@router.post("/discovery/runs", response_model=RunOut, status_code=202)
+@router.post("/discovery/runs", response_model=RunOut, status_code=202, dependencies=[Depends(admin)])
 def start_run(body: RunStart, db: Session = Depends(get_db)):
     return start_source_run(body.source_id, db)
 
