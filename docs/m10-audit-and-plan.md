@@ -185,5 +185,51 @@ Production impact: 0 opt-outs exist today, so no rows changed.
 - Pending candidates by rank after backfill: urlscan (rank 1) 441, Common Crawl (rank 3) 7,217, crt.sh (rank 5) 2.
 - Backlog query with the new partial index `(backlog_rank, first_seen_at)`: 0.24 ms (unchanged from M9).
 - **Before** (13:00–16:00 UTC, oldest-first): ≈ 240 verifications/h, 52 new stores in 4 h ≈ **13 stores/h**.
-- **After**: _measured below once the urlscan pool has been worked (~2 h)._
+- **After** (17:19 deploy → 20:10 UTC, 2.86 h): 708 verifications (≈ 248/h, same throughput),
+  **389 new stores** (373 confirmed + 16 probable) ≈ **136 stores/h vs 13 stores/h before**.
+  All 441 urlscan candidates processed: 373 stores (84.6 %), 0 unreachable; Common Crawl
+  267 processed → 16 stores. Retries 20 (2.8 %) vs 68 (7.1 %) before; failures 0 / 0.
+  Backlog after: Common Crawl 6,950, crt.sh 2, urlscan 0.
+  Caveat: this is a one-off gain from draining the high-yield pool; once it is empty the rate
+  returns to the yield of the next-ranked source.
 - Tests: 181.
+
+
+### Phase 2 — store identity (`81b2418`)
+Design: [`docs/store-identity.md`](store-identity.md). Migration 0012 backfilled 480 primary
+links (480 stores, 0 without a primary). Live after targeted re-checks of the 14 stores that
+shared a `Shopify.shop` id: `helloarchie.lu`/`.de` folded into `helloarchie.fr` (Shopify-served,
+same shop id); the 4 copied-HTML spam domains were **not** merged; at 20:48 UTC 6 duplicate
+stores had been folded and 47 stores carried a verified storefront key. Tests: 192.
+
+### Phases 3–4 — Common Crawl `myshopify.com`, crt.sh evidence-only (`dc897a7`)
+- `common_crawl_shopify` run: **17,016 unique `*.myshopify.com` hosts from 60 index blocks**
+  (CC-MAIN-2026-43; the earlier "~95 blocks" was an estimate from byte offsets). Each URL keeps
+  `source_ref = CC-MAIN-2026-43` and its CDX capture time. A second (scheduled) run the same
+  minute found 0 — the suffix is marked done; re-runs are no-ops until a new index is set.
+- First outcomes (only ~8 min of verification, 92 hosts — not representative yet):
+  51 confirmed, 22 uncertain, **10 inactive storefronts** (password page / HTTP 402 — not counted
+  as stores), 9 not ecommerce; 1 redirected to a custom domain (linked as `platform_hosted` alias).
+  No duplicate stores were created (0 live stores share a final host).
+- crt.sh: evidence-only, unscheduled; 0 candidates created since the change. Signal
+  `possibly_recently_launched` → `recent_first_certificate` ("not a store launch date");
+  store detail exposes `first_certificate_observed_at`.
+- Tests: 198.
+
+### Phase 5 — benchmark harness (`8f8765b`)
+Design: [`docs/benchmark.md`](benchmark.md). **No labels collected yet → no accuracy figures.**
+
+### Phase 6 — static inspection of JS-only pages (investigation only)
+`probe-shells --limit 120` (read-only, robots-respecting), 2026-11-04 20:45 UTC:
+439 pages currently "uncertain: no server-rendered content"; 120 probed → 49 fetch failures,
+71 fetched → **3 with a platform fingerprint, 2 with sitemap product URLs (3 with either)**.
+At ≤ 4 % recoverable, a no-JS second look is **not worth building now**; the shells are mostly
+parked/spam `.shop` pages. Revisit with benchmark data.
+
+### Review & rollback (branch not merged into `main`)
+- The VPS runs `m10-discovery-quality` (migrations 0010–0014 applied).
+- Rollback: `pg_dump` first (0012 downgrade drops `store_domains` history), then
+  `docker compose exec api alembic downgrade 0009` **on the m10 code**, then
+  `git checkout main && make deploy`. (Old code can't start against revision 0014 because the
+  API runs `alembic upgrade head` on boot.)
+- Tests at merge candidate: 202 passing on Postgres; web type-check clean.
