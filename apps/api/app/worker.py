@@ -15,6 +15,8 @@ celery_app.conf.update(
     result_expires=86400,
     broker_connection_retry_on_startup=True,
     include=["app.tasks"],
+    # Run exactly ONE beat process (compose service `beat`); it only enqueues the bounded tick.
+    beat_schedule={"monitoring-tick": {"task": "monitoring.tick", "schedule": settings.monitor_tick_seconds}},
     # One queue per task category so each can get its own worker pool later.
     task_routes={"verification.*": {"queue": "verification"}, "discovery.*": {"queue": "discovery"},
                  "products.*": {"queue": "products"}},

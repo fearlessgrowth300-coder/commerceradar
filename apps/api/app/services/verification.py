@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import CrawlJob, Domain, PlatformDetection, Store, StoreObservation
 from app.security.ssrf import BlockedDestination, DnsFailure
-from app.services import platforms
+from app.services import monitoring, platforms
 from app.services.fetcher import FetchError, SafeFetcher
 
 # Signal weights. Thresholds: confirmed >= 7 (and needs a strong signal), probable >= 4, uncertain >= 2.
@@ -262,22 +262,32 @@ def apply_result(db: Session, job: CrawlJob, result: VerificationResult) -> None
     is_store = result.status in ("confirmed_ecommerce", "probable_ecommerce")
     store = db.scalar(select(Store).where(Store.domain_id == domain.id))
     if is_store and store is None:
-        store = Store(domain_id=domain.id, first_verified_at=now, ecommerce_status=result.status)
+        store = Store(domain_id=domain.id, first_verified_at=now, ecommerce_status=result.status, consecutive_failures=0)
         db.add(store)
     if store is not None:
         if is_store:
+            # ecommerce_status keeps the last *positive* classification; a negative check only
+            # moves activity (after repeated evidence) — see monitoring.update_activity.
             store.ecommerce_status = result.status
-            store.activity_status = "active"
             store.store_name = (result.site_name or store.store_name or "")[:300] or None
             store.canonical_url = result.final_url
             store.last_verified_at = now
             store.last_observed_at = now
-        elif result.status == "not_ecommerce":
-            store.ecommerce_status = "not_ecommerce"  # keep the row and its history
-            store.activity_status = "uncertain"
         db.flush()
+        monitoring.update_activity(db, store, result.status, result.confidence, result.resolution, now)
         if is_store and result.platform:
             pf = result.platform
+            old = store.primary_platform
+            if old not in (None, "unknown", "custom") and pf.platform not in ("unknown", old):
+                store.last_changed_at = now
+                db.add(
+                    StoreObservation(
+                        store_id=store.id,
+                        observation_type="platform_change",
+                        observation_data={"from": old, "to": pf.platform, "confidence": pf.confidence},
+                        observed_at=now,
+                    )
+                )
             store.primary_platform = pf.platform
             store.platform_confidence = pf.confidence
             db.add(

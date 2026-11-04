@@ -6,6 +6,7 @@ import tempfile
 
 _db = os.environ.get("TEST_DATABASE_URL") or f"sqlite:///{tempfile.mkdtemp()}/test.db"
 os.environ["DATABASE_URL"] = _db
+os.environ["AUTO_EXTRACT_PRODUCTS"] = "false"  # tests enqueue explicitly; never via the real broker
 
 import pytest  # noqa: E402
 from alembic import command  # noqa: E402

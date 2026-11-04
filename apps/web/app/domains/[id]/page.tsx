@@ -11,6 +11,15 @@ type Detail = {
   store_id: string | null;
   platform: string | null;
   platform_confidence: number | null;
+  activity: {
+    activity_status: string;
+    activity_confidence: number | null;
+    activity_evidence: Record<string, unknown> | null;
+    consecutive_failures: number;
+    last_successful_check_at: string | null;
+    last_failed_check_at: string | null;
+    next_check_at: string | null;
+  } | null;
 };
 
 async function extract(formData: FormData) {
@@ -44,7 +53,7 @@ export default async function DomainPage({
   const { error } = await searchParams;
   const data = await getJson<Detail>(`/api/v1/domains/${encodeURIComponent(id)}`);
   if (!data) notFound();
-  const { domain, jobs, store_id, platform, platform_confidence } = data;
+  const { domain, jobs, store_id, platform, platform_confidence, activity } = data;
   const inFlight = jobs.some((j) => ["queued", "running", "retrying"].includes(j.status));
   const products = store_id
     ? await getJson<{ items: Product[]; total: number }>(`/api/v1/stores/${encodeURIComponent(store_id)}/products?page_size=100`)
@@ -73,6 +82,23 @@ export default async function DomainPage({
           <div><dt className="text-slate-500">First seen</dt><dd>{fmtDate(domain.first_seen_at)}</dd></div>
           <div><dt className="text-slate-500">Last checked</dt><dd>{fmtDate(domain.last_checked_at)}</dd></div>
         </dl>
+        {activity && (
+          <div className="mt-4 border-t border-slate-100 pt-3 text-sm">
+            <p>
+              <span className="text-slate-500">Activity:</span>{" "}
+              <span className="font-medium">{activity.activity_status.replace("_", " ")}</span>
+              {activity.activity_confidence != null && ` (${Math.round(activity.activity_confidence * 100)}%)`}
+              {typeof activity.activity_evidence?.rule === "string" && (
+                <span className="text-slate-600"> — {activity.activity_evidence.rule}</span>
+              )}
+            </p>
+            <p className="mt-1 text-slate-600">
+              Last success {fmtDate(activity.last_successful_check_at)} · last failure {fmtDate(activity.last_failed_check_at)} ·
+              consecutive failures {activity.consecutive_failures} · next check {fmtDate(activity.next_check_at)}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">An active website does not mean the store is making sales.</p>
+          </div>
+        )}
       </section>
 
       {store_id && (

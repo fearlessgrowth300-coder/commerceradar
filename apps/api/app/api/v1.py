@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import CrawlJob, DiscoveryRun, DiscoverySource, Product, Store
-from app.services import dashboard, discovery, domains, products
+from app.services import dashboard, discovery, domains, monitoring, products
 
 router = APIRouter(prefix="/api/v1")
 
@@ -70,6 +70,7 @@ class DomainDetail(BaseModel):
     store_id: uuid.UUID | None
     platform: str | None  # store's primary_platform; None when the domain isn't a verified store
     platform_confidence: float | None
+    activity: dict[str, Any] | None = None  # store activity status + evidence + check schedule
 
 
 class RunOut(BaseModel):
@@ -198,6 +199,11 @@ def get_domain(domain_id: uuid.UUID, db: Session = Depends(get_db)):
         "store_id": store.id if store else None,
         "platform": store.primary_platform if store else None,
         "platform_confidence": store.platform_confidence if store else None,
+        "activity": (
+            {k: getattr(store, k) for k in ("activity_status", "activity_confidence", "activity_evidence",
+             "consecutive_failures", "last_successful_check_at", "last_failed_check_at", "next_check_at", "last_changed_at")}
+            if store else None
+        ),  # fmt: skip
     }
 
 
@@ -285,3 +291,20 @@ def get_product(product_id: uuid.UUID, db: Session = Depends(get_db)):
     if not product:
         raise HTTPException(404, "product not found")
     return {"product": product, "history": products.product_history(db, product_id)}
+
+
+@router.get("/monitoring/status")
+def monitoring_status(db: Session = Depends(get_db)):
+    return monitoring.status(db, datetime.now(UTC))
+
+
+@router.post("/monitoring/tick", status_code=202)
+def monitoring_tick_now():
+    """Run one scheduler tick now instead of waiting for beat."""
+    from app.tasks import monitoring_tick
+
+    try:
+        monitoring_tick.delay()
+    except Exception as e:
+        raise HTTPException(503, "queue unavailable") from e
+    return {"queued": True}

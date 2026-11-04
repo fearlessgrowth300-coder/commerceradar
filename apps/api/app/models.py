@@ -129,6 +129,13 @@ class Store(Base):
     canonical_url: Mapped[str | None] = mapped_column(Text)
     ecommerce_status: Mapped[str] = mapped_column(String(30), index=True)
     activity_status: Mapped[str] = mapped_column(String(30), default="uncertain", index=True)
+    activity_confidence: Mapped[float | None] = mapped_column(Float)
+    activity_evidence: Mapped[dict[str, Any] | None] = mapped_column(JSONType)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_successful_check_at: Mapped[datetime | None] = _opt_ts()
+    last_failed_check_at: Mapped[datetime | None] = _opt_ts()
+    next_check_at: Mapped[datetime | None] = _opt_ts(index=True)
+    last_changed_at: Mapped[datetime | None] = _opt_ts()  # activity / platform / catalogue change
     primary_platform: Mapped[str] = mapped_column(String(30), default="unknown", index=True)
     platform_confidence: Mapped[float | None] = mapped_column(Float)
     first_verified_at: Mapped[datetime | None] = _opt_ts(index=True)
