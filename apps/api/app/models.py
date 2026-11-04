@@ -417,3 +417,18 @@ class StoreDomain(Base):
     last_observed_at: Mapped[datetime] = _ts()
     valid_from: Mapped[datetime] = _ts()
     valid_to: Mapped[datetime | None] = _opt_ts()
+
+
+class BenchmarkLabel(Base):
+    """Ground truth for the accuracy benchmark (M10). Never written by the classifier."""
+
+    __tablename__ = "benchmark_labels"
+    id: Mapped[uuid.UUID] = _pk()
+    domain: Mapped[str] = mapped_column(String(253), unique=True)
+    is_ecommerce: Mapped[bool] = mapped_column(Boolean)
+    platform: Mapped[str | None] = mapped_column(String(30))
+    label_source: Mapped[str] = mapped_column(String(30), index=True)  # vendor_showcase | human_sample | known_* | hard_case
+    labeller: Mapped[str | None] = mapped_column(String(100))
+    split: Mapped[str] = mapped_column(String(10), index=True)  # tune | holdout (fixed by hash of the domain)
+    notes: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = _ts()
