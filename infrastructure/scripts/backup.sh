@@ -35,8 +35,8 @@ docker compose exec -T postgres pg_dump -U "$USER" -d "$DB" -Fc -Z 6 > "$TMP" ||
 docker compose exec -T postgres pg_restore --list < "$TMP" | grep "TABLE DATA public alembic_version" >/dev/null || fail "dump integrity (pg_restore --list)"
 gpg --batch --no-tty --symmetric --cipher-algo AES256 --passphrase-file "$KEY" --output "$BASE.dump.gpg" "$TMP" || fail "encryption"
 rm -f "$TMP"  # no plaintext dump is kept
-gpg --batch --no-tty --quiet --decrypt --passphrase-file "$KEY" "$BASE.dump.gpg" \
-  | docker compose exec -T postgres pg_restore --list | grep "TABLE DATA public alembic_version" >/dev/null || fail "encrypted copy does not decrypt/restore-list"
+# Full decrypt (gpg checks its integrity tag over the whole file); the TOC was checked above.
+gpg --batch --no-tty --quiet --decrypt --passphrase-file "$KEY" "$BASE.dump.gpg" > /dev/null || fail "encrypted copy does not decrypt"
 (cd "$BACKUP_DIR" && sha256sum "$(basename "$BASE.dump.gpg")" > "$(basename "$BASE.dump.gpg").sha256")
 chmod 600 "$BASE.dump.gpg" "$BASE.dump.gpg.sha256"
 find "$BACKUP_DIR" -name "$DB-*.dump.gpg*" -mtime +"$KEEP_DAYS" -delete
