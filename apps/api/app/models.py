@@ -151,6 +151,10 @@ class Store(Base):
     next_check_at: Mapped[datetime | None] = _opt_ts(index=True)
     last_changed_at: Mapped[datetime | None] = _opt_ts()  # activity / platform / catalogue change
     signals_refreshed_at: Mapped[datetime | None] = _opt_ts(index=True)
+    # Store identity (M10): platform storefront id (e.g. "shopify:x.myshopify.com", only when served by
+    # the platform) and, for duplicates folded into another store, the surviving store.
+    storefront_key: Mapped[str | None] = mapped_column(String(200), unique=True)
+    merged_into_store_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("stores.id"), index=True)
     primary_platform: Mapped[str] = mapped_column(String(30), default="unknown", index=True)
     platform_confidence: Mapped[float | None] = mapped_column(Float)
     first_verified_at: Mapped[datetime | None] = _opt_ts(index=True)
@@ -386,3 +390,29 @@ class SuppressionEvent(Base):
     actor_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     subdomains: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = _ts(index=True)
+
+
+class StoreDomain(Base):
+    """Domain ↔ store link with evidence. Closed (valid_to) instead of deleted, so history survives."""
+
+    __tablename__ = "store_domains"
+    __table_args__ = (
+        # a domain belongs to at most one store at a time; each store has one current primary
+        Index("uq_store_domains_current_domain", "domain_id", unique=True,
+              postgresql_where=text("valid_to IS NULL AND role IN ('primary','alias')"),
+              sqlite_where=text("valid_to IS NULL AND role IN ('primary','alias')")),
+        Index("uq_store_domains_current_primary", "store_id", unique=True,
+              postgresql_where=text("valid_to IS NULL AND role = 'primary'"),
+              sqlite_where=text("valid_to IS NULL AND role = 'primary'")),
+    )  # fmt: skip
+    id: Mapped[uuid.UUID] = _pk()
+    store_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("stores.id"), index=True)
+    domain_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("domains.id"), index=True)
+    role: Mapped[str] = mapped_column(String(20))  # primary | alias | suggested
+    alias_type: Mapped[str] = mapped_column(String(30))  # self | storefront_id | platform_hosted | redirect_same_site | redirect | redirect_target | canonical | merged | promoted
+    confidence: Mapped[float] = mapped_column(Float)
+    evidence: Mapped[dict[str, Any] | None] = mapped_column(JSONType)
+    first_observed_at: Mapped[datetime] = _ts()
+    last_observed_at: Mapped[datetime] = _ts()
+    valid_from: Mapped[datetime] = _ts()
+    valid_to: Mapped[datetime | None] = _opt_ts()

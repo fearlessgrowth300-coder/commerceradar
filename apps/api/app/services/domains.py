@@ -143,5 +143,10 @@ def get_domain_detail(db: Session, domain_id: uuid.UUID):
     jobs = db.scalars(
         select(CrawlJob).where(CrawlJob.domain_id == domain_id).order_by(CrawlJob.scheduled_at.desc()).limit(20)
     ).all()
-    store = db.scalar(select(Store).where(Store.domain_id == domain_id))
+    from app.services import identity
+
+    link = identity.current_link(db, domain_id)
+    store = db.get(Store, link.store_id) if link else db.scalar(select(Store).where(Store.domain_id == domain_id))
+    if store is not None and store.merged_into_store_id:
+        store = db.get(Store, store.merged_into_store_id)
     return domain, jobs, store

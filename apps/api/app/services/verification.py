@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import CrawlJob, Domain, PlatformDetection, Store, StoreObservation
 from app.security.ssrf import BlockedDestination, DnsFailure
-from app.services import monitoring, platforms, signals
+from app.services import identity, monitoring, platforms, signals
 from app.services.signals import copyright_year
 from app.services.fetcher import FetchError, SafeFetcher
 
@@ -42,6 +42,15 @@ PRICE = re.compile(
 )
 
 
+SHOPIFY_SHOP = re.compile(r"Shopify\.shop\s*=\s*[\"']([a-z0-9][a-z0-9-]*\.myshopify\.com)[\"']")
+
+
+def _canonical(tree, meta: dict, page_url: str) -> str | None:
+    node = tree.css_first('link[rel="canonical"]')
+    href = (node.attributes.get("href") if node else None) or meta.get("og:url")
+    return urljoin(page_url, href)[:500] if href else None
+
+
 @dataclass
 class VerificationResult:
     status: str
@@ -51,6 +60,8 @@ class VerificationResult:
     final_url: str | None = None
     site_name: str | None = None
     platform: platforms.PlatformResult | None = None  # only for confirmed/probable stores
+    serving: dict[str, Any] = field(default_factory=dict)  # ip, identity headers, cookie names (identity evidence)
+    redirects: list[str] = field(default_factory=list)
 
 
 # ---------- pure parsing / scoring (unit-tested with fixtures) ----------
@@ -125,6 +136,8 @@ def extract_signals(html: str, page_url: str) -> dict[str, Any]:
         "price_count": len(prices),
         "text_chars": len(" ".join(body.split())),
         "copyright_year": copyright_year(body),
+        "shopify_shop": (m.group(1) if (m := SHOPIFY_SHOP.search(html)) else None),
+        "canonical": _canonical(tree, meta, page_url),
     }
 
 
@@ -201,7 +214,12 @@ def verify(host: str, fetcher: SafeFetcher) -> VerificationResult:
     except BlockedDestination as e:
         return VerificationResult("blocked", 1.0, "blocked", {"reason": str(e)})
 
-    evidence: dict[str, Any] = {"homepage": {"url": home.url, "status": home.status, "redirects": home.redirects}}
+    serving = {
+        "ip": home.ip,
+        "headers": {k: home.headers[k] for k in ("powered-by", "server", "x-shopid", "x-shopify-stage") if k in home.headers},
+        "cookies": platforms.cookie_names(home.set_cookies),
+    }
+    evidence: dict[str, Any] = {"homepage": {"url": home.url, "status": home.status, "redirects": home.redirects, "ip": home.ip}}
     if home.status >= 400:
         evidence["reason"] = f"homepage returned HTTP {home.status}"  # e.g. 403 bot wall: we don't bypass it
         return VerificationResult("uncertain", 0.0, "resolved", evidence, final_url=home.url)
@@ -246,6 +264,8 @@ def verify(host: str, fetcher: SafeFetcher) -> VerificationResult:
         final_url=home.url,
         site_name=signals["site_name"] or signals["title"],
         platform=platform,
+        serving=serving,
+        redirects=home.redirects,
     )
 
 
@@ -262,10 +282,13 @@ def apply_result(db: Session, job: CrawlJob, result: VerificationResult) -> None
     domain.last_seen_at = now
 
     is_store = result.status in ("confirmed_ecommerce", "probable_ecommerce")
-    store = db.scalar(select(Store).where(Store.domain_id == domain.id))
-    if is_store and store is None:
-        store = Store(domain_id=domain.id, first_verified_at=now, ecommerce_status=result.status, consecutive_failures=0)
-        db.add(store)
+    if is_store:
+        # Store identity (M10): one store per storefront, however many domains point at it.
+        home = (result.evidence.get("homepage") or {}).get("signals") or {}
+        store = identity.resolve(db, domain, result.status, home, result.serving, result.final_url,
+                                 result.redirects, home.get("canonical"), now)  # fmt: skip
+    else:
+        store = identity.primary_store_of(db, domain.id)  # negative checks only move the store via its primary
     if store is not None:
         if is_store:
             # ecommerce_status keeps the last *positive* classification; a negative check only

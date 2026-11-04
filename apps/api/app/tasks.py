@@ -9,7 +9,7 @@ from app import sources
 from app.db import SessionLocal
 from app.config import settings
 from app.models import CrawlJob, DiscoveryRun, DiscoverySource, Store
-from app.services import discovery, products, suppression, verification
+from app.services import discovery, identity, products, suppression, verification
 from app.services.fetcher import FetchError, SafeFetcher
 from app.worker import celery_app
 
@@ -76,7 +76,8 @@ def verify_domain(self, job_id: str) -> str:
 
         # Product monitoring rides on every positive store check (new or re-check).
         if settings.auto_extract_products and result.status in products.EXTRACTABLE:
-            store = db.scalar(select(Store).where(Store.domain_id == job.domain_id))
+            link = identity.current_link(db, job.domain_id)
+            store = db.get(Store, link.store_id) if link else db.scalar(select(Store).where(Store.domain_id == job.domain_id))
             try:
                 products.queue_extraction(db, store, _enqueue_products)
             except Exception:

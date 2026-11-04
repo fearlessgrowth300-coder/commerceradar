@@ -36,7 +36,7 @@ def list_stores(
         select(Store, Domain.normalized_domain, products)
         .join(Domain, Domain.id == Store.domain_id)
         .outerjoin(Product, (Product.store_id == Store.id) & (Product.status == "active"))
-        .where(Domain.suppressed_at.is_(None))
+        .where(Domain.suppressed_at.is_(None), Store.merged_into_store_id.is_(None))
         .group_by(Store.id, Domain.normalized_domain)
     )
     if q:
@@ -71,8 +71,16 @@ def store_detail(db: Session, store_id: uuid.UUID):
     if store is None:
         return None
     domain = db.get(Domain, store.domain_id)
-    if domain.suppressed_at is not None:
-        return None  # opted out: not shown
+    if domain.suppressed_at is not None or store.merged_into_store_id is not None:
+        return None  # opted out, or folded into another store
+    from app.models import StoreDomain
+
+    aliases = db.execute(
+        select(Domain.normalized_domain, StoreDomain.role, StoreDomain.alias_type, StoreDomain.confidence,
+               StoreDomain.first_observed_at, StoreDomain.last_observed_at, StoreDomain.valid_to)
+        .join(Domain, Domain.id == StoreDomain.domain_id).where(StoreDomain.store_id == store.id)
+        .order_by(StoreDomain.valid_to.is_not(None), StoreDomain.role, Domain.normalized_domain)
+    ).all()  # fmt: skip
     product_count = db.scalar(select(func.count()).select_from(Product).where(Product.store_id == store.id, Product.status == "active"))
     detections = db.scalars(
         select(PlatformDetection).where(PlatformDetection.store_id == store.id).order_by(PlatformDetection.detected_at.desc()).limit(5)
@@ -95,6 +103,11 @@ def store_detail(db: Session, store_id: uuid.UUID):
         "product_count": product_count or 0,
         "detections": detections,
         "signals": sig,
+        "domains": [
+            {"domain": a, "role": r, "alias_type": t, "confidence": c, "first_observed_at": f, "last_observed_at": l,
+             "current": v is None}
+            for a, r, t, c, f, l, v in aliases
+        ],  # fmt: skip
         "sources": [
             {"name": n, "source_type": t, "first_discovered_at": a, "last_discovered_at": b, "urls": c} for n, t, a, b, c in sources
         ],
@@ -114,7 +127,8 @@ def platform_distribution(db: Session) -> list[dict]:
     q = (
         select(Store.primary_platform, func.count())
         .join(Domain, Domain.id == Store.domain_id)
-        .where(Store.ecommerce_status.in_(("confirmed_ecommerce", "probable_ecommerce")), Domain.suppressed_at.is_(None))
+        .where(Store.ecommerce_status.in_(("confirmed_ecommerce", "probable_ecommerce")), Domain.suppressed_at.is_(None),
+               Store.merged_into_store_id.is_(None))
         .group_by(Store.primary_platform)
         .order_by(func.count().desc())
     )
@@ -141,5 +155,7 @@ def visible_store(db: Session, store_id: uuid.UUID) -> Store | None:
     """The store, unless it does not exist or its domain opted out."""
     store = db.get(Store, store_id)
     if store is None:
+        return None
+    if store.merged_into_store_id is not None:
         return None
     return None if db.scalar(select(Domain.suppressed_at).where(Domain.id == store.domain_id)) else store

@@ -196,7 +196,7 @@ def list_signals(db: Session, signal_type: str | None, category: str | None, act
         select(StoreSignal, Domain.normalized_domain, Store.store_name)
         .join(Store, Store.id == StoreSignal.store_id)
         .join(Domain, Domain.id == Store.domain_id)
-        .where(StoreSignal.active.is_(active), Domain.suppressed_at.is_(None))
+        .where(StoreSignal.active.is_(active), Domain.suppressed_at.is_(None), Store.merged_into_store_id.is_(None))
     )
     if signal_type:
         q = q.where(StoreSignal.signal_type == signal_type)

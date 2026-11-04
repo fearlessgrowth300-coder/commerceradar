@@ -186,7 +186,7 @@ def tick(
         select(Store.domain_id, Domain.normalized_domain)
         .join(Domain, Domain.id == Store.domain_id)
         .where(or_(Store.next_check_at.is_(None), Store.next_check_at <= now), ~_in_flight_verify(Store.domain_id),
-               Domain.suppressed_at.is_(None))
+               Domain.suppressed_at.is_(None), Store.merged_into_store_id.is_(None))
         .order_by(Store.next_check_at.asc().nulls_first())
         .limit(s.monitor_rechecks_per_tick)
     ).all()
@@ -244,7 +244,8 @@ def tick(
     from app.services import signals
 
     stale_signals = db.scalars(
-        select(Store).where(or_(Store.signals_refreshed_at.is_(None), Store.signals_refreshed_at < now - timedelta(days=1)))
+        select(Store).where(or_(Store.signals_refreshed_at.is_(None), Store.signals_refreshed_at < now - timedelta(days=1)),
+                            Store.merged_into_store_id.is_(None))
         .order_by(Store.signals_refreshed_at.asc().nulls_first()).limit(s.signals_refresh_per_tick)
     ).all()  # fmt: skip
     for store in stale_signals:

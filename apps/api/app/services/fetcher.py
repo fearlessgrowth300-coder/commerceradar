@@ -29,6 +29,7 @@ class FetchResult:
     headers: dict[str, str] = field(default_factory=dict)  # final response, lower-cased names
     set_cookies: list[str] = field(default_factory=list)  # every Set-Cookie seen along the redirect chain
     body: bytes = b""  # raw bytes (e.g. gzip blocks); `text` is the decoded form
+    ip: str | None = None  # address that served the final response (identity evidence)
 
 
 class SafeFetcher:
@@ -57,6 +58,7 @@ class SafeFetcher:
         set_cookies: list[str] = []
         for _ in range(MAX_REDIRECTS + 1):
             resp, body, truncated = self._fetch_once(url, headers or {})
+            ip = getattr(resp, "served_ip", None)
             set_cookies += resp.headers.get_list("set-cookie")
             if resp.is_redirect and "location" in resp.headers:
                 url = urljoin(url, resp.headers["location"])
@@ -74,6 +76,7 @@ class SafeFetcher:
                 headers={k.lower(): v for k, v in resp.headers.items() if k.lower() != "set-cookie"},
                 set_cookies=set_cookies,
                 body=body,
+                ip=ip,
             )
         raise BlockedDestination(f"more than {MAX_REDIRECTS} redirects")
 
@@ -117,6 +120,7 @@ class SafeFetcher:
                             truncated = True
                             del body[self.max_bytes :]
                             break
+                    resp.served_ip = ip
                     return resp, bytes(body), truncated
             except httpx.ConnectError as e:
                 last = e  # unreachable address: try the next one

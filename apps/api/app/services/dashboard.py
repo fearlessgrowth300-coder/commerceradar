@@ -10,12 +10,13 @@ def overview(db: Session) -> dict[str, int]:
     def count(stmt) -> int:
         return db.scalar(stmt) or 0
 
+    live = Store.merged_into_store_id.is_(None)  # duplicates folded into another store don't count twice
     return {
         "candidate_domains": count(select(func.count()).select_from(Domain)),
-        "verified_stores": count(select(func.count()).select_from(Store)),
-        "active_stores": count(select(func.count()).where(Store.activity_status == "active")),
-        "inactive_stores": count(select(func.count()).where(Store.activity_status == "inactive")),
-        "new_stores_7d": count(select(func.count()).where(Store.first_verified_at >= datetime.now(UTC) - timedelta(days=7))),
+        "verified_stores": count(select(func.count()).select_from(Store).where(live)),
+        "active_stores": count(select(func.count()).where(live, Store.activity_status == "active")),
+        "inactive_stores": count(select(func.count()).where(live, Store.activity_status == "inactive")),
+        "new_stores_7d": count(select(func.count()).where(live, Store.first_verified_at >= datetime.now(UTC) - timedelta(days=7))),
         "discovery_runs": count(select(func.count()).select_from(DiscoveryRun)),
         "failed_jobs": count(select(func.count()).where(CrawlJob.status == "failed")),
     }

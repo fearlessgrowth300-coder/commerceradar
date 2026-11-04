@@ -387,6 +387,7 @@ class StoreDetailOut(BaseModel):
     domain_id: uuid.UUID
     domain_first_seen_at: datetime
     product_count: int
+    domains: list[dict[str, Any]] = []
     detections: list[DetectionOut]
     signals: list[SignalOut]
     sources: list[dict[str, Any]]
