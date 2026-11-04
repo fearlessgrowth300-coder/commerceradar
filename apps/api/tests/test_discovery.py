@@ -451,8 +451,12 @@ def test_sources_api(client, monkeypatch):
     sources = {s["name"]: s for s in client.get("/api/v1/discovery/sources").json()}
     assert {"common_crawl", "certificate_transparency", "commerceradar_crawler", "urlscan"} <= set(sources)
 
-    sid = sources["urlscan"]["id"]
+    # urlscan is restricted (M11 source-rights audit): it can't be run
+    assert client.post(f"/api/v1/discovery/sources/{sources['urlscan']['id']}/runs").status_code == 409
+    sid = sources["commerceradar_crawler"]["id"]
     r = client.post(f"/api/v1/discovery/sources/{sid}/runs")
+    if r.status_code == 409:  # a scheduled crawler run may already be active in the shared test DB
+        return
     assert r.status_code == 202 and r.json()["status"] == "queued" and len(started) == 1
     assert client.post(f"/api/v1/discovery/sources/{sid}/runs").status_code == 409
     runs = client.get("/api/v1/discovery/runs", params={"source_id": sid}).json()

@@ -12,27 +12,31 @@ commercial intelligence; platform admins can still see them (flagged) for review
 
 import uuid
 
-from sqlalchemy import and_, exists, select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from app.models import DiscoveredUrl, DiscoverySource, Store, StoreDomain
 
 
-def _linked_domains():
-    return select(StoreDomain.domain_id).where(
-        StoreDomain.store_id == Store.id, StoreDomain.valid_to.is_(None), StoreDomain.role.in_(("primary", "alias"))
-    )
+def _found_by(restricted: bool):
+    """EXISTS: some domain of this store (current primary/alias link, or stores.domain_id) was found
+    by a source with the given restricted flag. Single-level subqueries, explicitly correlated."""
+    src = select(DiscoverySource.id).where(DiscoverySource.restricted.is_(restricted))
+    via_links = (
+        select(1)
+        .select_from(DiscoveredUrl)
+        .join(StoreDomain, StoreDomain.domain_id == DiscoveredUrl.domain_id)
+        .where(StoreDomain.store_id == Store.id, StoreDomain.valid_to.is_(None),
+               StoreDomain.role.in_(("primary", "alias")), DiscoveredUrl.source_id.in_(src))
+        .correlate(Store)
+    )  # fmt: skip
+    direct = select(1).select_from(DiscoveredUrl).where(DiscoveredUrl.domain_id == Store.domain_id, DiscoveredUrl.source_id.in_(src)).correlate(Store)
+    return via_links.exists() | direct.exists()
 
 
 def restricted_store_clause():
     """SQL boolean, correlated to `Store`: True when the store depends only on restricted sources."""
-    linked = _linked_domains()
-    in_linked = DiscoveredUrl.domain_id.in_(linked) | (DiscoveredUrl.domain_id == Store.domain_id)
-    restricted_src = select(DiscoverySource.id).where(DiscoverySource.restricted.is_(True))
-    open_src = select(DiscoverySource.id).where(DiscoverySource.restricted.is_(False))
-    has_restricted = exists().where(in_linked, DiscoveredUrl.source_id.in_(restricted_src))
-    has_open = exists().where(in_linked, DiscoveredUrl.source_id.in_(open_src))
-    return and_(has_restricted, ~has_open)
+    return and_(_found_by(True), ~_found_by(False))
 
 
 def restricted_ids(db: Session, store_ids: list[uuid.UUID]) -> set[uuid.UUID]:
