@@ -32,11 +32,11 @@ mkdir -p "$BACKUP_DIR" && chmod 700 "$BACKUP_DIR"
 [ -e "$BASE.dump.gpg" ] && fail "$BASE.dump.gpg already exists (never overwritten)"
 
 docker compose exec -T postgres pg_dump -U "$USER" -d "$DB" -Fc -Z 6 > "$TMP" || fail "pg_dump"
-docker compose exec -T postgres pg_restore --list < "$TMP" | grep -q "TABLE DATA public alembic_version" || fail "dump integrity (pg_restore --list)"
+docker compose exec -T postgres pg_restore --list < "$TMP" | grep "TABLE DATA public alembic_version" >/dev/null || fail "dump integrity (pg_restore --list)"
 gpg --batch --no-tty --symmetric --cipher-algo AES256 --passphrase-file "$KEY" --output "$BASE.dump.gpg" "$TMP" || fail "encryption"
 rm -f "$TMP"  # no plaintext dump is kept
 gpg --batch --no-tty --quiet --decrypt --passphrase-file "$KEY" "$BASE.dump.gpg" \
-  | docker compose exec -T postgres pg_restore --list | grep -q "TABLE DATA public alembic_version" || fail "encrypted copy does not decrypt/restore-list"
+  | docker compose exec -T postgres pg_restore --list | grep "TABLE DATA public alembic_version" >/dev/null || fail "encrypted copy does not decrypt/restore-list"
 (cd "$BACKUP_DIR" && sha256sum "$(basename "$BASE.dump.gpg")" > "$(basename "$BASE.dump.gpg").sha256")
 chmod 600 "$BASE.dump.gpg" "$BASE.dump.gpg.sha256"
 find "$BACKUP_DIR" -name "$DB-*.dump.gpg*" -mtime +"$KEEP_DAYS" -delete
