@@ -79,7 +79,7 @@ def ingest(
         stmt = _insert(db, Domain).values(chunk).on_conflict_do_nothing(index_elements=["normalized_domain"])
         new.update(db.execute(stmt.returning(Domain.normalized_domain, Domain.id)).tuples().all())
     for chunk in _chunks(hosts):
-        ids.update(db.execute(select(Domain.normalized_domain, Domain.id).where(Domain.normalized_domain.in_(chunk))).tuples())
+        ids.update(db.execute(select(Domain.normalized_domain, Domain.id).where(Domain.normalized_domain.in_(chunk))).tuples().all())
 
     url_rows = (
         [
