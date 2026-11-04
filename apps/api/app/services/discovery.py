@@ -6,7 +6,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from urllib.parse import urlsplit, urlunsplit
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
@@ -90,12 +90,17 @@ def ingest(
         ]  # fmt: skip
     )
     for chunk in _chunks(url_rows):
+        stmt = _insert(db, DiscoveredUrl).values(chunk)
+        earlier = stmt.excluded.first_discovered_at < DiscoveredUrl.first_discovered_at
         db.execute(
-            _insert(db, DiscoveredUrl)
-            .values(chunk)
-            .on_conflict_do_update(
+            stmt.on_conflict_do_update(
                 index_elements=["source_id", "normalized_url"],
-                set_={"last_discovered_at": now, "discovery_run_id": run.id},
+                set_={
+                    "last_discovered_at": now,
+                    "discovery_run_id": run.id,
+                    # a source may later report an older sighting (e.g. full CT history): keep the earliest
+                    "first_discovered_at": case((earlier, stmt.excluded.first_discovered_at), else_=DiscoveredUrl.first_discovered_at),
+                },
             )
         )
 

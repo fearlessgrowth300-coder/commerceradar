@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import CrawlJob, Domain, PlatformDetection, Store, StoreObservation
 from app.security.ssrf import BlockedDestination, DnsFailure
-from app.services import monitoring, platforms
+from app.services import monitoring, platforms, signals
+from app.services.signals import copyright_year
 from app.services.fetcher import FetchError, SafeFetcher
 
 # Signal weights. Thresholds: confirmed >= 7 (and needs a strong signal), probable >= 4, uncertain >= 2.
@@ -123,6 +124,7 @@ def extract_signals(html: str, page_url: str) -> dict[str, Any]:
         "product_link_count": len(product_links),
         "price_count": len(prices),
         "text_chars": len(" ".join(body.split())),
+        "copyright_year": copyright_year(body),
     }
 
 
@@ -323,4 +325,7 @@ def apply_result(db: Session, job: CrawlJob, result: VerificationResult) -> None
             else None
         ),
     }
+    if store is not None:
+        db.flush()
+        signals.refresh_store(db, store, now)
     db.commit()

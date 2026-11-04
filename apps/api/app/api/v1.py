@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import CrawlJob, DiscoveryRun, DiscoverySource, Product, Store
-from app.services import dashboard, discovery, domains, monitoring, products
+from app.services import dashboard, discovery, domains, monitoring, products, signals, stores
 
 router = APIRouter(prefix="/api/v1")
 
@@ -19,6 +19,7 @@ class Overview(BaseModel):
     verified_stores: int
     active_stores: int
     inactive_stores: int
+    new_stores_7d: int
     discovery_runs: int
     failed_jobs: int
 
@@ -308,3 +309,230 @@ def monitoring_tick_now():
     except Exception as e:
         raise HTTPException(503, "queue unavailable") from e
     return {"queued": True}
+
+
+# ---------- store directory, details, intelligence (M7) ----------
+
+ACTIVITY = ("active", "recently_active", "inactive", "uncertain")
+PLATFORMS = ("shopify", "woocommerce", "wix", "bigcommerce", "magento", "prestashop", "squarespace", "opencart", "custom", "unknown")
+
+
+class StoreRow(BaseModel):
+    id: uuid.UUID
+    domain: str
+    store_name: str | None
+    primary_platform: str
+    platform_confidence: float | None
+    ecommerce_status: str
+    activity_status: str
+    first_verified_at: datetime | None
+    last_verified_at: datetime | None
+    product_count: int
+
+
+class StorePage(BaseModel):
+    items: list[StoreRow]
+    total: int
+    page: int
+    page_size: int
+
+
+class SignalOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    signal_type: str
+    category: str
+    basis: str
+    summary: str
+    evidence: dict[str, Any]
+    active: bool
+    first_detected_at: datetime
+    last_detected_at: datetime
+    resolved_at: datetime | None
+
+
+class DetectionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    platform: str
+    confidence: float
+    evidence: dict[str, Any]
+    detection_method: str
+    detected_at: datetime
+
+
+class StoreFull(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    store_name: str | None
+    canonical_url: str | None
+    ecommerce_status: str
+    activity_status: str
+    activity_confidence: float | None
+    activity_evidence: dict[str, Any] | None
+    primary_platform: str
+    platform_confidence: float | None
+    first_verified_at: datetime | None
+    last_verified_at: datetime | None
+    last_observed_at: datetime | None
+    last_successful_check_at: datetime | None
+    last_failed_check_at: datetime | None
+    next_check_at: datetime | None
+    last_changed_at: datetime | None
+    consecutive_failures: int
+
+
+class StoreDetailOut(BaseModel):
+    store: StoreFull
+    domain: str
+    domain_id: uuid.UUID
+    domain_first_seen_at: datetime
+    product_count: int
+    detections: list[DetectionOut]
+    signals: list[SignalOut]
+    sources: list[dict[str, Any]]
+
+
+class StoreObservationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    observation_type: str
+    observation_data: dict[str, Any]
+    observed_at: datetime
+
+
+class ObservationPage(BaseModel):
+    items: list[StoreObservationOut]
+    total: int
+    page: int
+    page_size: int
+
+
+class SignalRow(SignalOut):
+    store_id: uuid.UUID
+    domain: str
+    store_name: str | None
+
+
+class SignalPage(BaseModel):
+    items: list[SignalRow]
+    total: int
+    page: int
+    page_size: int
+
+
+def _store_filters(platform, activity, signal) -> None:
+    if platform and platform not in PLATFORMS:
+        raise HTTPException(422, f"platform must be one of {', '.join(PLATFORMS)}")
+    if activity and activity not in ACTIVITY:
+        raise HTTPException(422, f"activity must be one of {', '.join(ACTIVITY)}")
+    if signal and signal not in signals.SIGNAL_TYPES:
+        raise HTTPException(422, f"signal must be one of {', '.join(signals.SIGNAL_TYPES)}")
+
+
+def _store_rows(rows) -> list[dict]:
+    return [
+        {"id": st.id, "domain": dom, "store_name": st.store_name, "primary_platform": st.primary_platform,
+         "platform_confidence": st.platform_confidence, "ecommerce_status": st.ecommerce_status,
+         "activity_status": st.activity_status, "first_verified_at": st.first_verified_at,
+         "last_verified_at": st.last_verified_at, "product_count": n}
+        for st, dom, n in rows
+    ]  # fmt: skip
+
+
+@router.get("/stores", response_model=StorePage)
+def list_stores(
+    db: Session = Depends(get_db),
+    q: str | None = Query(None, max_length=253),
+    platform: str | None = Query(None),
+    activity: str | None = Query(None),
+    ecommerce_status: str | None = Query(None, pattern="^(confirmed_ecommerce|probable_ecommerce)$"),
+    signal: str | None = Query(None),
+    verified_from: datetime | None = None,
+    verified_to: datetime | None = None,
+    sort: str = Query("newest", pattern="^(newest|oldest|last_verified|name|products)$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+):
+    _store_filters(platform, activity, signal)
+    rows, total = stores.list_stores(
+        db, q=q, platform=platform, activity=activity, ecommerce_status=ecommerce_status, signal=signal,
+        verified_from=verified_from, verified_to=verified_to, sort=sort, page=page, page_size=page_size,
+    )  # fmt: skip
+    return {"items": _store_rows(rows), "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/stores/{store_id}", response_model=StoreDetailOut)
+def get_store(store_id: uuid.UUID, db: Session = Depends(get_db)):
+    found = stores.store_detail(db, store_id)
+    if not found:
+        raise HTTPException(404, "store not found")
+    return found
+
+
+@router.get("/stores/{store_id}/observations", response_model=ObservationPage)
+def store_observations(
+    store_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    type: str | None = Query(None, max_length=50),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+):
+    if not db.get(Store, store_id):
+        raise HTTPException(404, "store not found")
+    items, total = stores.observations(db, store_id, type, page, page_size)
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/platforms")
+def platform_distribution(db: Session = Depends(get_db)):
+    return stores.platform_distribution(db)
+
+
+@router.get("/signals", response_model=SignalPage)
+def list_signals(
+    db: Session = Depends(get_db),
+    type: str | None = Query(None),
+    category: str | None = Query(None, pattern="^(growth|change|opportunity|health)$"),
+    active: bool = True,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+):
+    if type and type not in signals.SIGNAL_TYPES:
+        raise HTTPException(422, f"type must be one of {', '.join(signals.SIGNAL_TYPES)}")
+    rows, total = signals.list_signals(db, type, category, active, page, page_size)
+    items = [
+        {**SignalOut.model_validate(sg).model_dump(), "store_id": sg.store_id, "domain": dom, "store_name": name}
+        for sg, dom, name in rows
+    ]
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/signals/types")
+def signal_types(db: Session = Depends(get_db)):
+    active = signals.counts(db)
+    return [{"type": t, "category": c, "basis": b, "active": active.get(t, 0)} for t, (c, b) in signals.SIGNAL_TYPES.items()]
+
+
+@router.get("/dashboard/activity")
+def dashboard_activity(db: Session = Depends(get_db)):
+    return {
+        "platforms": stores.platform_distribution(db),
+        "recent_runs": [RunOut.model_validate(r).model_dump() for r in discovery.list_runs(db, None, 5)],
+        "recent_changes": stores.recent_changes(db),
+        "signals": signals.counts(db),
+    }
+
+
+class RunStart(BaseModel):
+    source_id: uuid.UUID
+
+
+@router.post("/discovery/runs", response_model=RunOut, status_code=202)
+def start_run(body: RunStart, db: Session = Depends(get_db)):
+    return start_source_run(body.source_id, db)
+
+
+@router.get("/discovery/runs/{run_id}", response_model=RunOut)
+def get_run(run_id: uuid.UUID, db: Session = Depends(get_db)):
+    run = db.get(DiscoveryRun, run_id)
+    if not run:
+        raise HTTPException(404, "run not found")
+    return run

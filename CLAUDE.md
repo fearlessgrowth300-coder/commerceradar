@@ -13,7 +13,9 @@ The core asset is the **database** (quality, coverage, freshness, history), not 
   - Fetcher tries IPv4 first: Docker network has no IPv6 route.
 - M5 Product extraction: done (122 tests; live 2026-11-04: allbirds/aquila.com.au/activebaby.ca → 60 products, all with price+currency+availability, spot-checked vs live page). `app/services/products.py`: sitemaps (product sitemaps first) + homepage links → bounded pages/run (`PRODUCT_PAGES_PER_RUN`=20, 1s delay, robots Crawl-delay) → JSON-LD/OpenGraph → `products` + append-only `product_observations` (new/changed/removed/reappeared). Removal = 404/410 only (absence from a partial crawl proves nothing).
 - M6 Continuous monitoring: done (136 tests; live 2026-11-04). `app/services/monitoring.py`: activity rules (`update_activity`, failure kinds negative/transient/inconclusive), state-based `next_check`, `tick()` run by the `beat` compose service every MONITOR_TICK_SECONDS (bounded: rechecks/backlog/candidate rechecks per tick, scheduled sources via `schedule_hours`, stuck job/run recovery). Positive checks queue a product re-check (AUTO_EXTRACT_PRODUCTS). All intervals are env settings in `app/config.py`. Run exactly ONE beat.
-- Next: M7 intelligence and opportunity signals.
+- M7 Intelligence signals: done (151 tests; live 2026-11-04). `app/services/signals.py`: 11 signal types (growth/change/opportunity/health), basis observed|inferred, raw evidence, rows resolved never deleted. Refreshed after verification + product extraction + daily in the tick. Store directory/details/observations/platforms/signals API + pages.
+  - LESSON: crt.sh `exclude=expired` makes every domain look new (90-day certs) — CT queries must read full history; ingest keeps the earliest first_discovered_at.
+- Next: M8 commercial SaaS (accounts, auth, tenants, plans, limits, saved searches, alerts, exports, billing adapter, admin).
 
 ## Layout
 - `apps/api/app` — FastAPI + SQLAlchemy + Celery in ONE package (modular monolith). API = `uvicorn app.main:app`, worker = `celery -A app.worker worker`. Same image, different command, so workers can move to other machines later.
