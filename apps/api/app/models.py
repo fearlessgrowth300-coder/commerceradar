@@ -25,6 +25,7 @@ from sqlalchemy import (
     Uuid,
     false,
     func,
+    text,
     true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -110,6 +111,11 @@ class Domain(Base):
     """A candidate domain. Becomes a Store only after passing verification."""
 
     __tablename__ = "domains"
+    # Backlog pick (monitoring tick): pending domains oldest-first without scanning all pending rows.
+    __table_args__ = (
+        Index("ix_domains_pending_first_seen", "first_seen_at",
+              postgresql_where=text("verification_status = 'pending'"), sqlite_where=text("verification_status = 'pending'")),
+    )  # fmt: skip
     id: Mapped[uuid.UUID] = _pk()
     normalized_domain: Mapped[str] = mapped_column(String(253), unique=True)
     first_seen_at: Mapped[datetime] = _ts(index=True)
@@ -235,7 +241,10 @@ class StoreSignal(Base):
 
 class CrawlJob(Base):
     __tablename__ = "crawl_jobs"
-    __table_args__ = (Index("ix_crawl_jobs_status_scheduled", "status", "scheduled_at"),)
+    __table_args__ = (
+        Index("ix_crawl_jobs_status_scheduled", "status", "scheduled_at"),
+        Index("ix_crawl_jobs_domain_type_status", "domain_id", "job_type", "status"),  # "in-flight job for domain?" checks
+    )
     id: Mapped[uuid.UUID] = _pk()
     domain_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("domains.id"), index=True)
     target_domain: Mapped[str] = mapped_column(String(253), index=True)

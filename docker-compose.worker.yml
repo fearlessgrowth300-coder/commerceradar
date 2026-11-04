@@ -1,0 +1,28 @@
+# Extra worker machine (M9). Runs ONLY Celery workers against the main server's Postgres + Redis.
+#
+#   1. On the main server, expose Postgres (5432) and Redis (6379) on a PRIVATE network only
+#      (WireGuard / provider private network). Never on the public internet. Redis needs a
+#      password (requirepass) before it leaves 127.0.0.1.
+#   2. On this machine: copy the repo, create .env with DATABASE_URL / REDIS_URL pointing at
+#      the main server's private address, then:
+#        docker compose -f docker-compose.worker.yml up -d --build
+#   3. Do NOT run `beat` here — exactly one scheduler runs on the main server.
+#
+# Queues can be split per machine, e.g. WORKER_QUEUES=verification,products on a crawl box.
+services:
+  worker:
+    build: ./apps/api
+    command: >
+      celery -A app.worker worker -Q ${WORKER_QUEUES:-celery,verification,discovery,products}
+      --loglevel=info --concurrency=${WORKER_CONCURRENCY:-2} --hostname=worker@%h
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL to the main server's private Postgres}
+      REDIS_URL: ${REDIS_URL:?set REDIS_URL to the main server's private Redis}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+    restart: unless-stopped
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.worker inspect ping -d worker@$$HOSTNAME --timeout 5"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

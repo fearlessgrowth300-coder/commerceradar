@@ -134,7 +134,8 @@ def test_recheck_updates_without_losing_history(db):
 
 @pytest.fixture
 def big_limits(monkeypatch):
-    for name in ("monitor_rechecks_per_tick", "monitor_backlog_per_tick", "monitor_candidate_rechecks_per_tick"):
+    for name in ("monitor_rechecks_per_tick", "monitor_backlog_per_tick", "monitor_candidate_rechecks_per_tick",
+                 "monitor_max_in_flight"):
         monkeypatch.setattr(settings, name, 100000)
 
 

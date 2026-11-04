@@ -192,13 +192,16 @@ def tick(
     ).all()
     out["store_rechecks"] = _queue(db, due, 4, enqueue_verify)
 
-    # 2. never-verified candidates (oldest first)
+    # 2. never-verified candidates (oldest first). Adaptive: top the queue up to monitor_max_in_flight
+    #    instead of a fixed quota — measured on the VPS, the fixed quota (not the worker) was the bottleneck.
+    in_flight = db.scalar(select(func.count()).select_from(CrawlJob).where(CrawlJob.status.in_(IN_FLIGHT))) or 0
+    budget = min(s.monitor_backlog_per_tick, max(0, s.monitor_max_in_flight - in_flight))
     any_verify = exists().where(CrawlJob.domain_id == Domain.id, CrawlJob.job_type == "verify")
     backlog = db.execute(
         select(Domain.id, Domain.normalized_domain)
         .where(Domain.verification_status == "pending", ~any_verify, Domain.suppressed_at.is_(None))
         .order_by(Domain.first_seen_at)
-        .limit(s.monitor_backlog_per_tick)
+        .limit(budget)
     ).all()
     out["backlog_verifications"] = _queue(db, backlog, 7, enqueue_verify)
 
@@ -252,7 +255,49 @@ def tick(
     from app.services import workspace
 
     out["alerts_created"] = workspace.run_alerts(db, now)
+    out.update(compact_history(db, now))
     return out
+
+
+def compact_history(db: Session, now: datetime) -> dict:
+    """Retention (M9): raw evidence of old *superseded* verification checks is reduced to its
+    summary (status, confidence, score, platform). The latest check per domain, all
+    observations and all product history are kept in full. Expired sessions are deleted."""
+    from sqlalchemy import delete
+    from sqlalchemy.orm import aliased
+
+    from app.models import AuthSession
+
+    cutoff = now - timedelta(days=settings.job_evidence_retention_days)
+    newer = aliased(CrawlJob)
+    jobs = db.scalars(
+        select(CrawlJob)
+        .where(
+            CrawlJob.job_type == "verify",
+            CrawlJob.status == "succeeded",
+            CrawlJob.completed_at < cutoff,
+            exists().where(newer.domain_id == CrawlJob.domain_id, newer.job_type == "verify",
+                           newer.status == "succeeded", newer.completed_at > CrawlJob.completed_at),
+        )
+        .limit(settings.compact_per_tick * 4)
+    ).all()  # fmt: skip
+    compacted = 0
+    for job in jobs:
+        r = job.result or {}
+        if (r.get("evidence") or {}).get("compacted"):
+            continue
+        pf = r.get("platform") or {}
+        job.result = {
+            "status": r.get("status"), "confidence": r.get("confidence"), "resolution": r.get("resolution"),
+            "platform": {"platform": pf.get("platform"), "confidence": pf.get("confidence")} if pf else None,
+            "evidence": {"compacted": True, "compacted_at": now.isoformat(), "score": (r.get("evidence") or {}).get("score")},
+        }  # fmt: skip
+        compacted += 1
+        if compacted >= settings.compact_per_tick:
+            break
+    sessions = db.execute(delete(AuthSession).where(AuthSession.expires_at < now)).rowcount or 0
+    db.commit()
+    return {"evidence_compacted": compacted, "sessions_expired": sessions}
 
 
 def status(db: Session, now: datetime) -> dict:
