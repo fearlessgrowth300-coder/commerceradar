@@ -4,7 +4,9 @@ Ecommerce intelligence + store discovery SaaS. Full master spec: `docs/spec.md` 
 The core asset is the **database** (quality, coverage, freshness, history), not the dashboard.
 
 ## Status
-- M1 Foundation: done (see README). Next: M2 domain ingestion + verification.
+- M1 Foundation: done.
+- M2 Domain ingestion + verification: done (61 tests on Postgres; live-checked on VPS 2026-11-04). Known limit: no JS rendering — JS-only storefronts come out `uncertain`.
+- Next: M3 platform detection.
 
 ## Layout
 - `apps/api/app` — FastAPI + SQLAlchemy + Celery in ONE package (modular monolith). API = `uvicorn app.main:app`, worker = `celery -A app.worker worker`. Same image, different command, so workers can move to other machines later.
