@@ -1,17 +1,23 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { StatusBadge } from "@/components/StatusBadge";
-import { type Domain, fmtDate, getJson, type Job } from "@/lib/api";
+import { type Domain, fmtDate, getJson, type Job, PLATFORM_LABEL } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
-type Detail = { domain: Domain; jobs: Job[]; store_id: string | null };
+type Detail = {
+  domain: Domain;
+  jobs: Job[];
+  store_id: string | null;
+  platform: string | null;
+  platform_confidence: number | null;
+};
 
 export default async function DomainPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const data = await getJson<Detail>(`/api/v1/domains/${encodeURIComponent(id)}`);
   if (!data) notFound();
-  const { domain, jobs, store_id } = data;
+  const { domain, jobs, store_id, platform, platform_confidence } = data;
   const inFlight = jobs.some((j) => ["queued", "running", "retrying"].includes(j.status));
 
   return (
@@ -28,6 +34,12 @@ export default async function DomainPage({ params }: { params: Promise<{ id: str
           </div>
           <div><dt className="text-slate-500">DNS / resolution</dt><dd>{domain.current_resolution_status ?? "—"}</dd></div>
           <div><dt className="text-slate-500">Verified store record</dt><dd>{store_id ? "Yes" : "No"}</dd></div>
+          <div>
+            <dt className="text-slate-500">Platform</dt>
+            <dd>
+              {platform ? `${PLATFORM_LABEL[platform] ?? platform}${platform_confidence ? ` (${Math.round(platform_confidence * 100)}%)` : ""}` : "—"}
+            </dd>
+          </div>
           <div><dt className="text-slate-500">First seen</dt><dd>{fmtDate(domain.first_seen_at)}</dd></div>
           <div><dt className="text-slate-500">Last checked</dt><dd>{fmtDate(domain.last_checked_at)}</dd></div>
         </dl>
@@ -53,6 +65,16 @@ export default async function DomainPage({ params }: { params: Promise<{ id: str
                     <summary className="cursor-pointer text-slate-600">Evidence</summary>
                     <pre className="mt-2 max-h-96 overflow-auto rounded bg-slate-50 p-3 text-xs">
                       {JSON.stringify(j.result.evidence, null, 2)}
+                    </pre>
+                  </details>
+                )}
+                {j.result?.platform && (
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-slate-600">
+                      Platform evidence: {PLATFORM_LABEL[j.result.platform.platform] ?? j.result.platform.platform}
+                    </summary>
+                    <pre className="mt-2 max-h-96 overflow-auto rounded bg-slate-50 p-3 text-xs">
+                      {JSON.stringify(j.result.platform.evidence, null, 2)}
                     </pre>
                   </details>
                 )}

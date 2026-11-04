@@ -15,8 +15,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import CrawlJob, Domain, Store, StoreObservation
+from app.models import CrawlJob, Domain, PlatformDetection, Store, StoreObservation
 from app.security.ssrf import BlockedDestination, DnsFailure
+from app.services import platforms
 from app.services.fetcher import FetchError, SafeFetcher
 
 # Signal weights. Thresholds: confirmed >= 7 (and needs a strong signal), probable >= 4, uncertain >= 2.
@@ -48,6 +49,7 @@ class VerificationResult:
     evidence: dict[str, Any] = field(default_factory=dict)
     final_url: str | None = None
     site_name: str | None = None
+    platform: platforms.PlatformResult | None = None  # only for confirmed/probable stores
 
 
 # ---------- pure parsing / scoring (unit-tested with fixtures) ----------
@@ -209,6 +211,7 @@ def verify(host: str, fetcher: SafeFetcher) -> VerificationResult:
     evidence["homepage"]["signals"] = signals
 
     # One product page usually carries the Product JSON-LD the homepage lacks.
+    pages_html = home.text
     product_url = next((u for u in signals["product_links"] if robots.can_fetch(ua, u)), None)
     if product_url and not signals["product_structured_data"]:
         try:
@@ -217,6 +220,8 @@ def verify(host: str, fetcher: SafeFetcher) -> VerificationResult:
                 product_signals = extract_signals(page.text, page.url)
                 evidence["product_page"] = {"url": page.url, "status": page.status, "signals": product_signals}
                 signals = merge_signals(signals, product_signals)
+                pages_html += "
+" + page.text
         except (FetchError, BlockedDestination, DnsFailure) as e:
             evidence["product_page"] = {"url": product_url, "error": str(e)}
 
@@ -227,8 +232,19 @@ def verify(host: str, fetcher: SafeFetcher) -> VerificationResult:
         status, confidence = "uncertain", 0.0
         evidence["reason"] = "homepage has almost no server-rendered content; cannot judge without executing JS"
     evidence["score"] = {"points": points, "signals_hit": hits, "weights": WEIGHTS}
+    platform = None
+    if status in ("confirmed_ecommerce", "probable_ecommerce"):
+        platform = platforms.detect(
+            pages_html, home.headers, platforms.cookie_names(home.set_cookies), status == "confirmed_ecommerce"
+        )
     return VerificationResult(
-        status, confidence, "resolved", evidence, final_url=home.url, site_name=signals["site_name"] or signals["title"]
+        status,
+        confidence,
+        "resolved",
+        evidence,
+        final_url=home.url,
+        site_name=signals["site_name"] or signals["title"],
+        platform=platform,
     )
 
 
@@ -261,6 +277,20 @@ def apply_result(db: Session, job: CrawlJob, result: VerificationResult) -> None
             store.ecommerce_status = "not_ecommerce"  # keep the row and its history
             store.activity_status = "uncertain"
         db.flush()
+        if is_store and result.platform:
+            pf = result.platform
+            store.primary_platform = pf.platform
+            store.platform_confidence = pf.confidence
+            db.add(
+                PlatformDetection(
+                    store_id=store.id,
+                    platform=pf.platform,
+                    confidence=pf.confidence,
+                    evidence=pf.evidence,
+                    detection_method=pf.method,
+                    detected_at=now,
+                )
+            )
         db.add(
             StoreObservation(
                 store_id=store.id,
@@ -278,5 +308,10 @@ def apply_result(db: Session, job: CrawlJob, result: VerificationResult) -> None
         "confidence": result.confidence,
         "resolution": result.resolution,
         "evidence": result.evidence,
+        "platform": (
+            {"platform": result.platform.platform, "confidence": result.platform.confidence, "evidence": result.platform.evidence}
+            if result.platform
+            else None
+        ),
     }
     db.commit()

@@ -26,6 +26,8 @@ class FetchResult:
     text: str
     truncated: bool
     redirects: list[str] = field(default_factory=list)
+    headers: dict[str, str] = field(default_factory=dict)  # final response, lower-cased names
+    set_cookies: list[str] = field(default_factory=list)  # every Set-Cookie seen along the redirect chain
 
 
 class SafeFetcher:
@@ -47,8 +49,10 @@ class SafeFetcher:
 
     def fetch(self, url: str) -> FetchResult:
         redirects: list[str] = []
+        set_cookies: list[str] = []
         for _ in range(MAX_REDIRECTS + 1):
             resp, text, truncated = self._fetch_once(url)
+            set_cookies += resp.headers.get_list("set-cookie")
             if resp.is_redirect and "location" in resp.headers:
                 url = urljoin(url, resp.headers["location"])
                 redirects.append(url)
@@ -62,6 +66,8 @@ class SafeFetcher:
                 text=text,
                 truncated=truncated,
                 redirects=redirects,
+                headers={k.lower(): v for k, v in resp.headers.items() if k.lower() != "set-cookie"},
+                set_cookies=set_cookies,
             )
         raise BlockedDestination(f"more than {MAX_REDIRECTS} redirects")
 

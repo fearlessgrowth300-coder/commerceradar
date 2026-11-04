@@ -67,6 +67,8 @@ class DomainDetail(BaseModel):
     domain: DomainOut
     jobs: list[JobOut]
     store_id: uuid.UUID | None
+    platform: str | None  # store's primary_platform; None when the domain isn't a verified store
+    platform_confidence: float | None
 
 
 def _enqueue(job_id: uuid.UUID) -> None:
@@ -110,8 +112,14 @@ def get_domain(domain_id: uuid.UUID, db: Session = Depends(get_db)):
     found = domains.get_domain_detail(db, domain_id)
     if not found:
         raise HTTPException(404, "domain not found")
-    domain, jobs, store_id = found
-    return {"domain": domain, "jobs": jobs, "store_id": store_id}
+    domain, jobs, store = found
+    return {
+        "domain": domain,
+        "jobs": jobs,
+        "store_id": store.id if store else None,
+        "platform": store.primary_platform if store else None,
+        "platform_confidence": store.platform_confidence if store else None,
+    }
 
 
 @router.get("/jobs/{job_id}", response_model=JobOut)
