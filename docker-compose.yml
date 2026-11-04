@@ -55,6 +55,15 @@ services:
       timeout: 10s
       retries: 3
 
+  beat:
+    # Scheduler. Exactly one instance: it only enqueues the bounded monitoring tick.
+    build: ./apps/api
+    command: celery -A app.worker beat --loglevel=info --schedule /tmp/celerybeat-schedule
+    environment: *api-env
+    volumes: [./apps/api:/app]
+    depends_on:
+      redis: { condition: service_healthy }
+
   web:
     build: ./apps/web
     command: npm run dev

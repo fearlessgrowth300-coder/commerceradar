@@ -61,7 +61,19 @@ def verify_domain(self, job_id: str) -> str:
             verification.apply_result(db, job, result)
         except Exception as e:
             return _fail(db, jid, e)
+
+        # Product monitoring rides on every positive store check (new or re-check).
+        if settings.auto_extract_products and result.status in products.EXTRACTABLE:
+            store = db.scalar(select(Store).where(Store.domain_id == job.domain_id))
+            try:
+                products.queue_extraction(db, store, _enqueue_products)
+            except Exception:
+                log.warning("could not queue product extraction for %s", job.target_domain)
         return result.status
+
+
+def _enqueue_products(job_id) -> None:
+    extract_products.delay(str(job_id))
 
 
 # ---------- discovery ----------
@@ -141,6 +153,7 @@ def run_discovery_batch(self, run_id: str, seq: int) -> str:
         run.records_processed += stats["urls"]
         run.records_failed += stats["invalid"]
         log_lines = [*(cursor.get("log") or [])[-19:], batch.note]  # last 20 batch notes
+        cursor["touched"] = datetime.now(UTC).isoformat()  # stuck-run detection
         if batch.cursor is None:
             run.status, run.completed_at = "succeeded", datetime.now(UTC)
             run.cursor = {**cursor, "seq": seq + 1, "log": log_lines, "verify_queued": used + stats["queued"], "done": True}
@@ -206,3 +219,23 @@ def extract_products(self, job_id: str) -> str:
         job.result = {"status": "extracted", "evidence": stats.__dict__}
         db.commit()
         return "succeeded"
+
+
+# ---------- monitoring ----------
+
+
+@celery_app.task(name="monitoring.tick")
+def monitoring_tick() -> dict:
+    """Beat-driven. Bounded work per call, safe to run twice (in-flight checks dedupe)."""
+    from app.services import monitoring
+
+    with SessionLocal() as db:
+        result = monitoring.tick(
+            db,
+            datetime.now(UTC),
+            enqueue_verify=lambda jid: verify_domain.delay(str(jid)),
+            enqueue_products=_enqueue_products,
+            enqueue_run=lambda rid, seq: run_discovery_batch.delay(str(rid), seq),
+        )
+    log.info("monitoring tick: %s", result)
+    return result

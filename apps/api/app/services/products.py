@@ -318,6 +318,7 @@ def extract_store(db: Session, store: Store, fetcher: SafeFetcher, max_pages: in
     """One bounded pass over a store. Network errors on single pages are counted, not raised;
     an unreachable store raises FetchError so the task can retry later."""
     stats = ExtractStats()
+    had_products = db.scalar(select(func.count()).select_from(Product).where(Product.store_id == store.id)) > 0
     host = db.scalar(select(Domain.normalized_domain).where(Domain.id == store.domain_id))
     base = store.canonical_url or f"https://{host}/"
     host = (urlsplit(base).hostname or host).removeprefix("www.")
@@ -388,5 +389,7 @@ def extract_store(db: Session, store: Store, fetcher: SafeFetcher, max_pages: in
         )
     )
     store.last_observed_at = now
+    if had_products and (stats.new or stats.changed or stats.removed):
+        store.last_changed_at = now  # catalogue moving ⇒ monitoring re-checks sooner
     db.commit()
     return stats
