@@ -53,6 +53,11 @@ def _lines(ctx: Ctx, url: str, offset: int, size: int = PROBE) -> list[tuple[int
         pos = nl + 1
 
 
+def _lines_from(ctx: Ctx, url: str, line_start: int, size: int = PROBE) -> list[tuple[int, str]]:
+    """Like _lines, but `line_start` is known to begin a line, so that line is kept."""
+    return _lines(ctx, url, line_start - 1, size + 1) if line_start > 0 else _lines(ctx, url, 0, size)
+
+
 def _file_size(ctx: Ctx, url: str) -> int:
     r = get_ok(ctx.fetcher, url, {"Range": "bytes=0-0"})
     m = re.search(r"/(\d+)$", r.headers.get("content-range", ""))
@@ -73,7 +78,7 @@ def find_start(ctx: Ctx, cluster_url: str, prefix: str) -> int:
         else:
             hi = mid
     start = 0
-    for off, line in _lines(ctx, cluster_url, lo, 2 * PROBE + 1024):
+    for off, line in _lines_from(ctx, cluster_url, lo, 2 * PROBE + 1024):
         if line.split(" ", 1)[0] >= prefix:
             break
         start = off
@@ -136,7 +141,7 @@ class CommonCrawl:
 
         found: list[Found] = []
         done = False
-        lines = _lines(ctx, cluster_url, offset)
+        lines = _lines_from(ctx, cluster_url, offset)
         for n, (off, line) in enumerate(lines[:blocks_per_batch]):
             parts = line.split("\t")
             if len(parts) < 4:

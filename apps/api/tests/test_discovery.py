@@ -254,7 +254,7 @@ def test_urlscan_pages_and_stops_at_previous_run(db):
     b1 = src.fetch_batch(cfg, {}, state, ctx)
     b2 = src.fetch_batch(cfg, b1.cursor, state, ctx)
     assert [f.url for f in b1.found + b2.found] == ["https://s1.example/", "https://s2.example/", "https://s3.example/"]
-    assert calls[1]["search_after"] == "3,c" and b2.cursor is None
+    assert calls[1]["search_after"] == "2,b" and b2.cursor is None  # sort key of page 1's last result
     assert state["since"] == "2026-11-03T10:00:00Z"
     # next run: page1 again, but everything is at/older than `since`
     b3 = src.fetch_batch(cfg, {}, state, ctx)
