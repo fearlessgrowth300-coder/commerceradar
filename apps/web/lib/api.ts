@@ -52,6 +52,27 @@ export function fmtDate(s: string | null): string {
   return s ? new Date(s).toISOString().replace("T", " ").slice(0, 16) + " UTC" : "—";
 }
 
+export type Product = {
+  id: string;
+  product_url: string;
+  title: string | null;
+  image_url: string | null;
+  sku: string | null;
+  category: string | null;
+  current_price: string | null; // decimal serialized as string, never a float
+  currency: string | null;
+  availability: string | null;
+  status: string;
+  extraction_method: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+};
+
+export function fmtPrice(price: string | null, currency: string | null): string {
+  if (price == null) return "—";
+  return currency ? `${price} ${currency}` : price;
+}
+
 export const PLATFORM_LABEL: Record<string, string> = {
   shopify: "Shopify",
   woocommerce: "WooCommerce",
