@@ -51,7 +51,8 @@ class CrtSh:
         qs = list(config.get("queries") or [])
         if config.get("seed_from_stores", True):
             confirmed = select(Domain.normalized_domain).join(Store, Store.domain_id == Domain.id)
-            confirmed = confirmed.where(Store.ecommerce_status == "confirmed_ecommerce").order_by(Domain.normalized_domain)
+            confirmed = confirmed.where(Store.ecommerce_status == "confirmed_ecommerce", Domain.suppressed_at.is_(None))
+            confirmed = confirmed.order_by(Domain.normalized_domain)
             qs += [f"%.{d}" for d in ctx.db.scalars(confirmed.limit(int(config.get("max_store_queries", 200))))]
         return qs
 

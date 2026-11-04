@@ -23,7 +23,9 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    false,
     func,
+    true,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -117,6 +119,9 @@ class Domain(Base):
     verification_status: Mapped[str] = mapped_column(String(30), default="pending", server_default="pending", index=True)
     verification_confidence: Mapped[float | None] = mapped_column(Float)
     last_checked_at: Mapped[datetime | None] = _opt_ts(index=True)
+    # Opt-out / suppression (spec §16): never crawled again, hidden from the directory.
+    suppressed_at: Mapped[datetime | None] = _opt_ts(index=True)
+    suppression_reason: Mapped[str | None] = mapped_column(String(300))
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = _updated()
 
@@ -270,3 +275,89 @@ class ContactRecord(Base):
     collected_at: Mapped[datetime] = _ts()
     suppressed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     suppressed_at: Mapped[datetime | None] = _opt_ts()
+
+
+# ---------- commercial SaaS (M8): accounts, tenants, usage ----------
+
+
+class Organization(Base):
+    """A tenant. Owns saved searches, alerts, exports and usage; the store database is shared."""
+
+    __tablename__ = "organizations"
+    id: Mapped[uuid.UUID] = _pk()
+    name: Mapped[str] = mapped_column(String(200))
+    plan: Mapped[str] = mapped_column(String(20), default="free", server_default="free")
+    billing_customer_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    subscription_status: Mapped[str | None] = mapped_column(String(30))
+    created_at: Mapped[datetime] = _ts()
+    updated_at: Mapped[datetime] = _updated()
+
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[uuid.UUID] = _pk()
+    email: Mapped[str] = mapped_column(String(320), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(300))
+    name: Mapped[str | None] = mapped_column(String(200))
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())  # platform operator
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    failed_logins: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    locked_until: Mapped[datetime | None] = _opt_ts()
+    last_login_at: Mapped[datetime | None] = _opt_ts()
+    created_at: Mapped[datetime] = _ts()
+
+
+class Membership(Base):
+    __tablename__ = "memberships"
+    __table_args__ = (UniqueConstraint("user_id", "organization_id"),)
+    id: Mapped[uuid.UUID] = _pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    role: Mapped[str] = mapped_column(String(20), default="owner")  # owner | member
+    created_at: Mapped[datetime] = _ts()
+
+
+class AuthSession(Base):
+    """Only the SHA-256 of the bearer token is stored."""
+
+    __tablename__ = "auth_sessions"
+    id: Mapped[uuid.UUID] = _pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = _ts()
+
+
+class SavedSearch(Base):
+    __tablename__ = "saved_searches"
+    id: Mapped[uuid.UUID] = _pk()
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str] = mapped_column(String(200))
+    filters: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)  # store-directory filters
+    alerts_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_alert_check_at: Mapped[datetime | None] = _opt_ts()
+    created_at: Mapped[datetime] = _ts()
+
+
+class Alert(Base):
+    """A store newly matching a saved search. In-app; email delivery needs SMTP (not configured)."""
+
+    __tablename__ = "alerts"
+    __table_args__ = (UniqueConstraint("saved_search_id", "store_id"),)
+    id: Mapped[uuid.UUID] = _pk()
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    saved_search_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("saved_searches.id"))
+    store_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("stores.id"))
+    created_at: Mapped[datetime] = _ts(index=True)
+    read_at: Mapped[datetime | None] = _opt_ts()
+
+
+class UsageCounter(Base):
+    __tablename__ = "usage_counters"
+    __table_args__ = (UniqueConstraint("organization_id", "metric", "period"),)
+    id: Mapped[uuid.UUID] = _pk()
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"), index=True)
+    metric: Mapped[str] = mapped_column(String(50))  # exports | export_rows
+    period: Mapped[str] = mapped_column(String(7))  # YYYY-MM
+    count: Mapped[int] = mapped_column(Integer, default=0)

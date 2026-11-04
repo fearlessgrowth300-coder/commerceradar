@@ -1,14 +1,35 @@
 // Server-side only: API_URL is the internal address (http://api:8000 in docker).
-export const API_URL = process.env.API_URL ?? "http://localhost:8000";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
-export async function getJson<T>(path: string): Promise<T | null> {
+export const API_URL = process.env.API_URL ?? "http://localhost:8000";
+export const SESSION_COOKIE = "cr_session";
+
+/** fetch() against the API with the user's session forwarded as a Bearer token. */
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  const headers: Record<string, string> = { ...((init.headers as Record<string, string>) ?? {}) };
+  if (token) headers.authorization = `Bearer ${token}`;
+  return fetch(`${API_URL}${path}`, { ...init, headers, cache: "no-store" });
+}
+
+export async function getJson<T>(path: string, opts: { redirectOn401?: boolean } = {}): Promise<T | null> {
+  let res: Response;
   try {
-    const res = await fetch(`${API_URL}${path}`, { cache: "no-store" });
-    return res.ok || res.status === 503 ? ((await res.json()) as T) : null;
+    res = await apiFetch(path);
   } catch {
     return null;
   }
+  if (res.status === 401 && opts.redirectOn401 !== false) redirect("/login"); // session expired
+  return res.ok || res.status === 503 ? ((await res.json()) as T) : null;
 }
+
+export async function apiError(res: Response): Promise<string> {
+  const body = await res.json().catch(() => ({}));
+  return typeof body.detail === "string" ? body.detail : `request failed (${res.status})`;
+}
+
+export type Me = { id: string; email: string; name: string | null; is_admin: boolean; role: string; organization: { id: string; name: string; plan: string } };
 
 export type Domain = {
   id: string;

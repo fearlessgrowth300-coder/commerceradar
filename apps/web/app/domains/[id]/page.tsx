@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { StatusBadge } from "@/components/StatusBadge";
-import { API_URL, type Domain, fmtDate, fmtPrice, getJson, type Job, PLATFORM_LABEL, type Product } from "@/lib/api";
+import { apiFetch, type Domain, fmtDate, fmtPrice, getJson, type Job, PLATFORM_LABEL, type Product } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -28,10 +28,7 @@ async function extract(formData: FormData) {
   const back = `/domains/${encodeURIComponent(String(formData.get("domain_id")))}`;
   let error = "";
   try {
-    const res = await fetch(`${API_URL}/api/v1/stores/${encodeURIComponent(storeId)}/products/extract`, {
-      method: "POST",
-      cache: "no-store",
-    });
+    const res = await apiFetch(`/api/v1/stores/${encodeURIComponent(storeId)}/products/extract`, { method: "POST" });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       error = typeof body.detail === "string" ? body.detail : `request failed (${res.status})`;

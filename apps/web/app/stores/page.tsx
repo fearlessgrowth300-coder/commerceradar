@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { fmtDate, getJson, PLATFORM_LABEL } from "@/lib/api";
+import { redirect } from "next/navigation";
+import { apiError, apiFetch, fmtDate, getJson, PLATFORM_LABEL } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,23 @@ const SORTS: [string, string][] = [
   ["products", "Most products observed"],
 ];
 const FILTERS = ["q", "platform", "activity", "signal", "verified_from", "verified_to", "sort"] as const;
+
+async function saveSearch(formData: FormData) {
+  "use server";
+  const filters = Object.fromEntries(FILTERS.map((k) => [k, String(formData.get(k) ?? "")]).filter(([, v]) => v));
+  let error = "";
+  try {
+    const res = await apiFetch("/api/v1/searches", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: String(formData.get("name") || "Saved search"), filters, alerts_enabled: formData.get("alerts") === "on" }),
+    });
+    if (!res.ok) error = await apiError(res);
+  } catch {
+    error = "API unreachable";
+  }
+  redirect(error ? `/stores?${new URLSearchParams({ ...filters, error })}` : "/searches");
+}
 
 export default async function Stores({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const sp = await searchParams;
@@ -83,6 +101,18 @@ export default async function Stores({ searchParams }: { searchParams: Promise<R
         </div>
       </form>
       <p className="text-xs text-slate-500">Country filter is not offered: we have no reliable country data yet.</p>
+      {sp.error && <p className="text-sm text-red-700">{sp.error}</p>}
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <form action={saveSearch} className="flex flex-wrap items-center gap-2">
+          {FILTERS.map((k) => sp[k] && <input key={k} type="hidden" name={k} value={sp[k]} />)}
+          <input name="name" required placeholder="Name this search" aria-label="Saved search name" className="rounded-md border border-slate-300 px-2 py-1" />
+          <label className="flex items-center gap-1 text-slate-600"><input type="checkbox" name="alerts" /> alert me about new matches</label>
+          <button className="rounded-md border border-slate-300 px-3 py-1">Save this search</button>
+        </form>
+        <a href={`/exports/stores?${new URLSearchParams(Object.fromEntries(FILTERS.filter((k) => sp[k]).map((k) => [k, sp[k]!])))}`} className="underline">
+          Export CSV
+        </a>
+      </div>
 
       {!data ? (
         <p className="text-sm text-red-700">API unreachable.</p>

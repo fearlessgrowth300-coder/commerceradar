@@ -4,12 +4,14 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.api import v1
+from app.api import account, v1
 from app.config import settings
 from app.db import get_db
 from app.worker import celery_app
 
 app = FastAPI(title="CommerceRadar API", version="0.1.0")
+app.include_router(account.public)
+app.include_router(account.router)
 app.include_router(v1.router)
 
 

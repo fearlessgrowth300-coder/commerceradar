@@ -185,7 +185,8 @@ def tick(
     due = db.execute(
         select(Store.domain_id, Domain.normalized_domain)
         .join(Domain, Domain.id == Store.domain_id)
-        .where(or_(Store.next_check_at.is_(None), Store.next_check_at <= now), ~_in_flight_verify(Store.domain_id))
+        .where(or_(Store.next_check_at.is_(None), Store.next_check_at <= now), ~_in_flight_verify(Store.domain_id),
+               Domain.suppressed_at.is_(None))
         .order_by(Store.next_check_at.asc().nulls_first())
         .limit(s.monitor_rechecks_per_tick)
     ).all()
@@ -195,7 +196,7 @@ def tick(
     any_verify = exists().where(CrawlJob.domain_id == Domain.id, CrawlJob.job_type == "verify")
     backlog = db.execute(
         select(Domain.id, Domain.normalized_domain)
-        .where(Domain.verification_status == "pending", ~any_verify)
+        .where(Domain.verification_status == "pending", ~any_verify, Domain.suppressed_at.is_(None))
         .order_by(Domain.first_seen_at)
         .limit(s.monitor_backlog_per_tick)
     ).all()
@@ -210,6 +211,7 @@ def tick(
             Domain.last_checked_at < now - timedelta(days=s.candidate_recheck_days),
             ~is_store,
             ~_in_flight_verify(Domain.id),
+            Domain.suppressed_at.is_(None),
         )
         .order_by(Domain.last_checked_at)
         .limit(s.monitor_candidate_rechecks_per_tick)
@@ -246,6 +248,10 @@ def tick(
         signals.refresh_store(db, store, now)
     db.commit()
     out["signals_refreshed"] = len(stale_signals)
+
+    from app.services import workspace
+
+    out["alerts_created"] = workspace.run_alerts(db, now)
     return out
 
 

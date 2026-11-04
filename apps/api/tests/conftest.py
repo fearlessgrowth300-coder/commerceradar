@@ -33,6 +33,25 @@ def db():
         session.rollback()
 
 
+@pytest.fixture(scope="session")
+def admin_token(migrated):
+    from app.services import accounts
+
+    email = "admin@tests.example"
+    with SessionLocal() as db:
+        try:
+            accounts.register(db, email, "correct horse battery", "Admin", "Ops", is_admin=True)
+        except accounts.AuthError:
+            pass  # already there (reused test DB)
+        return accounts.login(db, email, "correct horse battery")
+
+
 @pytest.fixture
-def client():
+def client(admin_token):
+    """Authenticated as a platform admin (most tests exercise operator features)."""
+    return TestClient(app, headers={"Authorization": f"Bearer {admin_token}"})
+
+
+@pytest.fixture
+def anon():
     return TestClient(app)

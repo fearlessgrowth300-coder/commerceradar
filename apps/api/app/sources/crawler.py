@@ -84,7 +84,7 @@ class LinkCrawler:
         q = (
             select(Store.id, Domain.normalized_domain)
             .join(Domain, Domain.id == Store.domain_id)
-            .where(Store.ecommerce_status == "confirmed_ecommerce", ~recent)
+            .where(Store.ecommerce_status == "confirmed_ecommerce", ~recent, Domain.suppressed_at.is_(None))
             .order_by(Store.id)
         )
         if cursor.get("after"):
