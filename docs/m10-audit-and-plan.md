@@ -166,3 +166,24 @@ Each step: run tests, deploy, record before/after in this file.
 - #6: one-off labelling fetches; no ongoing load.
 - #7: one extra request (sitemap) for ~22 % of checks → ≈ +5–10 % verification time (*estimate*).
 - No new services, no paid dependencies.
+
+## 10. Progress log (before → after, measured)
+
+### Step 1 — suppression hardening (done, `c9e4b58`)
+| Check | Before | After |
+|---|---|---|
+| New subdomain of an opted-out domain from any source | became a candidate and was verified | dropped at ingest (`stats.suppressed`) |
+| Redirect from an allowed domain into an opted-out one | followed and fetched | refused inside `SafeFetcher` on every hop → `blocked` |
+| Manual submit of `sub.optedout.com` | accepted | 422 |
+| Existing subdomain candidates when a parent opts out | unaffected | marked covered; queued jobs failed; reversed exactly on un-suppress |
+| Views exposing suppressed data | `/domains`, `/signals`, recent changes, platform counts, products, observations | none (admin suppression list only) |
+| Audit trail | erased on un-suppress | `suppression_events` (who/when/why), backfilled |
+| Tests | 173 | 180 (7 new, all passing on Postgres) |
+Production impact: 0 opt-outs exist today, so no rows changed.
+
+### Step 2 — yield-ordered backlog (done, `cc0a544`)
+- Pending candidates by rank after backfill: urlscan (rank 1) 441, Common Crawl (rank 3) 7,217, crt.sh (rank 5) 2.
+- Backlog query with the new partial index `(backlog_rank, first_seen_at)`: 0.24 ms (unchanged from M9).
+- **Before** (13:00–16:00 UTC, oldest-first): ≈ 240 verifications/h, 52 new stores in 4 h ≈ **13 stores/h**.
+- **After**: _measured below once the urlscan pool has been worked (~2 h)._
+- Tests: 181.
