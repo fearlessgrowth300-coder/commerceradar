@@ -53,7 +53,7 @@ class UrlScan:
                     seen = datetime.fromisoformat(t.replace("Z", "+00:00")) if t else None
                 except ValueError:
                     seen = None
-                found.append(Found(page["url"], seen))
+                found.append(Found(page["url"], seen, f"urlscan:{res.get('_id') or (res.get('task') or {}).get('uuid', '')}"))
 
         more = data.get("has_more") and results and not reached_old
         if not more:

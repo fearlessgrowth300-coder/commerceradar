@@ -74,10 +74,11 @@ def test_growth_signals(db):
                          domain_id=d.id, first_discovered_at=now - timedelta(days=20), last_discovered_at=now))  # fmt: skip
     db.commit()
     got = {x.type: x for x in signals.compute(db, s, now)}
-    assert {"newly_verified_store", "possibly_recently_launched", "rapid_catalogue_expansion"} <= set(got)
+    assert {"newly_verified_store", "recent_first_certificate", "rapid_catalogue_expansion"} <= set(got)
     assert got["rapid_catalogue_expansion"].evidence["new_products"] == 12
-    assert "inferred" in got["possibly_recently_launched"].summary
-    assert signals.SIGNAL_TYPES["possibly_recently_launched"][1] == "inferred"
+    assert "not a store launch date" in got["recent_first_certificate"].summary
+    assert got["recent_first_certificate"].evidence["first_certificate_observed_at"]
+    assert signals.SIGNAL_TYPES["recent_first_certificate"] == ("change", "observed")
 
 
 def test_first_extraction_is_not_expansion(db):
@@ -158,7 +159,7 @@ def test_store_directory_filters_and_detail(db, client):
     assert plats["shopify"] >= 1 and plats["woocommerce"] >= 1
     sig = client.get("/api/v1/signals", params={"type": "newly_verified_store"}).json()
     assert any(r["store_id"] == str(a.id) and r["basis"] == "observed" for r in sig["items"])
-    assert any(t["type"] == "possibly_recently_launched" and t["basis"] == "inferred" for t in client.get("/api/v1/signals/types").json())
+    assert any(t["type"] == "recent_first_certificate" and t["basis"] == "observed" for t in client.get("/api/v1/signals/types").json())
     act = client.get("/api/v1/dashboard/activity").json()
     assert {"platforms", "recent_runs", "recent_changes", "signals"} <= set(act)
     assert "new_stores_7d" in client.get("/api/v1/dashboard/overview").json()

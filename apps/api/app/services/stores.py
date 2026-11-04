@@ -95,7 +95,13 @@ def store_detail(db: Session, store_id: uuid.UUID):
         .where(DiscoveredUrl.domain_id == store.domain_id)
         .group_by(DiscoverySource.name, DiscoverySource.source_type)
     ).all()  # fmt: skip
+    first_cert = db.scalar(
+        select(func.min(DiscoveredUrl.first_discovered_at))
+        .join(DiscoverySource, DiscoverySource.id == DiscoveredUrl.source_id)
+        .where(DiscoveredUrl.domain_id == store.domain_id, DiscoverySource.source_type == "crtsh")
+    )
     return {
+        "first_certificate_observed_at": first_cert,
         "store": store,
         "domain": domain.normalized_domain,
         "domain_id": domain.id,

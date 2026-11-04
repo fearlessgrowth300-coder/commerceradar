@@ -22,6 +22,7 @@ VERIFICATION_STATUSES = (
     "uncertain",
     "temporarily_unreachable",
     "blocked",
+    "inactive_storefront",  # password-protected / unavailable storefront (e.g. dormant x.myshopify.com)
 )
 
 

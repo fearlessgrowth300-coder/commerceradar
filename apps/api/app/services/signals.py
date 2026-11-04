@@ -22,7 +22,7 @@ COPYRIGHT = re.compile(r"(?:©|\(c\)|copyright)\s*(?:\d{4}\s*[-–]\s*)?((?:19|2
 # type → (category, basis)
 SIGNAL_TYPES: dict[str, tuple[str, str]] = {
     "newly_verified_store": ("growth", "observed"),
-    "possibly_recently_launched": ("growth", "inferred"),
+    "recent_first_certificate": ("change", "observed"),
     "rapid_catalogue_expansion": ("growth", "observed"),
     "catalogue_changes": ("change", "observed"),
     "technology_change": ("change", "observed"),
@@ -75,10 +75,10 @@ def compute(db: Session, store: Store, now: datetime) -> list[Signal]:
     )
     cert = _aware(cert)
     if cert and now - cert <= timedelta(days=LAUNCH_CERT_DAYS):
-        out.append(Signal("possibly_recently_launched",
-                          f"Earliest TLS certificate we have seen dates from {_d(cert)}. The store may be new "
-                          "(inferred: older certificates may exist that we have not seen).",
-                          {"earliest_certificate_seen": cert.isoformat()}))  # fmt: skip
+        out.append(Signal("recent_first_certificate",
+                          f"First TLS certificate observed in Certificate Transparency logs: {_d(cert)}. "
+                          "This is when a certificate was issued, not a store launch date.",
+                          {"first_certificate_observed_at": cert.isoformat(), "source": "crt.sh (full history)"}))  # fmt: skip
 
     # Catalogue: only what our sampled extractions observed — never a claim about the full catalogue.
     since = now - timedelta(days=WINDOW_DAYS)

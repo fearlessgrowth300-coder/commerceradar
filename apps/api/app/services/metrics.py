@@ -59,10 +59,12 @@ def source_yield(db: Session) -> list[dict]:
     """Per source: candidates found, how many were verified so far, how many became stores."""
     q = (
         select(DiscoverySource.name, Domain.verification_status, func.count(func.distinct(Domain.id)))
+        .where(DiscoverySource.enabled.is_(True))
         .join(DiscoveredUrl, DiscoveredUrl.source_id == DiscoverySource.id)
         .join(Domain, Domain.id == DiscoveredUrl.domain_id)
         .group_by(DiscoverySource.name, Domain.verification_status)
     )
+    roles = dict(db.execute(select(DiscoverySource.name, DiscoverySource.configuration)).tuples().all())
     by: dict[str, dict[str, int]] = {}
     for name, status, n in db.execute(q).all():
         by.setdefault(name, {})[status] = n
@@ -71,7 +73,8 @@ def source_yield(db: Session) -> list[dict]:
         total = sum(counts.values())
         checked = total - counts.get("pending", 0)
         stores = sum(counts.get(s, 0) for s in STORE_STATUSES)
-        out.append({"source": name, "candidates": total, "verified": checked, "stores": stores,
+        role = "evidence" if (roles.get(name) or {}).get("evidence_only") else "discovery"
+        out.append({"source": name, "role": role, "candidates": total, "verified": checked, "stores": stores,
                     "store_rate": round(stores / checked, 3) if checked else None})  # fmt: skip
     return out
 

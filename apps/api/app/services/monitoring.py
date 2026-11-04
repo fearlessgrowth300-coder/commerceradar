@@ -31,7 +31,7 @@ def failure_kind(status: str, resolution: str) -> str | None:
     """None for a positive check; else negative | transient | inconclusive."""
     if status in POSITIVE:
         return None
-    if status == "not_ecommerce" or status == "blocked" or resolution == "nxdomain":
+    if status in ("not_ecommerce", "blocked", "inactive_storefront") or resolution == "nxdomain":
         return "negative"  # shop gone, domain gone, or now points at a non-public address
     if status == "temporarily_unreachable":
         return "transient"

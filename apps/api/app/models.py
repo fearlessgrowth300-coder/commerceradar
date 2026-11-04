@@ -102,6 +102,7 @@ class DiscoveredUrl(Base):
     source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("discovery_sources.id"), index=True)
     discovery_run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("discovery_runs.id"), index=True)
     domain_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("domains.id"), index=True)
+    source_ref: Mapped[str | None] = mapped_column(String(200))  # e.g. CC-MAIN-2026-43, crt.sh:<id>, urlscan:<uuid>
     first_discovered_at: Mapped[datetime] = _ts(index=True)
     last_discovered_at: Mapped[datetime] = _ts()
     processing_status: Mapped[str] = mapped_column(String(20), default="pending", index=True)

@@ -220,6 +220,12 @@ def verify(host: str, fetcher: SafeFetcher) -> VerificationResult:
         "cookies": platforms.cookie_names(home.set_cookies),
     }
     evidence: dict[str, Any] = {"homepage": {"url": home.url, "status": home.status, "redirects": home.redirects, "ip": home.ip}}
+    path = urlsplit(home.url).path.rstrip("/")
+    if path.endswith("/password") or home.status == 402:
+        # Storefront exists but is not open: Shopify password page (development / pre-launch) or a
+        # frozen/unavailable shop (HTTP 402). Not an active store; not "not ecommerce" either.
+        evidence["reason"] = "storefront is password-protected" if path.endswith("/password") else "storefront unavailable (HTTP 402)"
+        return VerificationResult("inactive_storefront", 0.9, "resolved", evidence, final_url=home.url)
     if home.status >= 400:
         evidence["reason"] = f"homepage returned HTTP {home.status}"  # e.g. 403 bot wall: we don't bypass it
         return VerificationResult("uncertain", 0.0, "resolved", evidence, final_url=home.url)

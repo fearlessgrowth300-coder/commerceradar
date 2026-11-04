@@ -154,6 +154,8 @@ class CommonCrawl:
             start, length = int(parts[2]), int(parts[3])
             block = get_ok(ctx.fetcher, cdx_url, {"Range": f"bytes={start}-{start + length - 1}"})
             urls, past = parse_block(block.body, prefix)
+            for f in urls:
+                f.ref = index  # exact crawl index; seen_at = the CDX capture timestamp
             found += urls
             offset = lines[n + 1][0] if n + 1 < len(lines) else off + len(line.encode()) + 1
             if past:

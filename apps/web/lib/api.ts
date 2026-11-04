@@ -67,6 +67,7 @@ export const STATUS_LABEL: Record<string, string> = {
   uncertain: "Uncertain",
   temporarily_unreachable: "Unreachable",
   blocked: "Blocked (non-public)",
+  inactive_storefront: "Inactive storefront",
 };
 
 export function fmtDate(s: string | null): string {

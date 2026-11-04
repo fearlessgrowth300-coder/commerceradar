@@ -53,6 +53,7 @@ def ingest(
     """Idempotent: re-ingesting the same batch changes only last_discovered_at."""
     now = datetime.now(UTC)
     urls: dict[str, tuple[str, datetime]] = {}
+    refs: dict[str, str] = {}
     invalid = 0
     for f in found:
         n = normalize_url(f.url)
@@ -60,6 +61,8 @@ def ingest(
             invalid += 1
             continue
         urls.setdefault(n[0], (n[1], f.seen_at or now))
+        if f.ref:
+            refs.setdefault(n[0], f.ref[:200])
     roots = suppression.suppressed_roots(db)
     dropped = 0
     if roots:  # opt-outs are excluded before anything is recorded (incl. subdomains)
@@ -68,9 +71,18 @@ def ingest(
     if not urls:
         return {"urls": 0, "invalid": invalid, "new_domains": 0, "queued": 0, "suppressed": dropped}
 
-    hosts = sorted({h for h, _ in urls.values()})
     source = db.get(DiscoverySource, source_id)
-    rank = int((source.configuration or {}).get("backlog_rank", 5)) if source else 5
+    config = (source.configuration or {}) if source else {}
+    rank = int(config.get("backlog_rank", 5))
+    if config.get("evidence_only"):
+        # Supporting-evidence source (crt.sh since M10): attach records to domains we already know,
+        # never create candidates or queue verification from it.
+        known = set(db.scalars(select(Domain.normalized_domain).where(Domain.normalized_domain.in_(sorted({h for h, _ in urls.values()})))))
+        urls = {u: v for u, v in urls.items() if v[0] in known}
+        verify_budget = 0
+        if not urls:
+            return {"urls": 0, "invalid": invalid, "new_domains": 0, "queued": 0, "suppressed": dropped}
+    hosts = sorted({h for h, _ in urls.values()})
     first_seen = {}
     for h, seen in urls.values():
         first_seen[h] = min(first_seen.get(h, seen), seen)
@@ -95,7 +107,7 @@ def ingest(
         [
             {"id": uuid.uuid4(), "normalized_url": u, "hostname": h, "source_id": source_id,
              "discovery_run_id": run.id, "domain_id": ids[h], "first_discovered_at": seen,
-             "last_discovered_at": now, "processing_status": "pending"}
+             "last_discovered_at": now, "processing_status": "pending", "source_ref": refs.get(u)}
             for u, (h, seen) in urls.items()
         ]  # fmt: skip
     )
@@ -108,6 +120,7 @@ def ingest(
                 set_={
                     "last_discovered_at": now,
                     "discovery_run_id": run.id,
+                    "source_ref": stmt.excluded.source_ref,
                     # a source may later report an older sighting (e.g. full CT history): keep the earliest
                     "first_discovered_at": case((earlier, stmt.excluded.first_discovered_at), else_=DiscoveredUrl.first_discovered_at),
                 },

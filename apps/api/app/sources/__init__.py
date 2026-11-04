@@ -25,6 +25,7 @@ class SourceError(Exception):
 class Found:
     url: str
     seen_at: datetime | None = None  # when the source observed it, if it says
+    ref: str | None = None  # provider record reference (CC index id, crt.sh cert id, urlscan scan id)
 
 
 @dataclass

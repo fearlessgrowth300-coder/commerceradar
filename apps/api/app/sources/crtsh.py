@@ -85,6 +85,6 @@ class CrtSh:
                 seen = _seen(e)
                 prev = found.get(h)
                 if prev is None or (seen and (prev.seen_at is None or seen < prev.seen_at)):
-                    found[h] = Found(f"https://{h}/", seen)  # keep the earliest certificate per hostname
+                    found[h] = Found(f"https://{h}/", seen, f"crt.sh:{cid}")  # earliest certificate per hostname
         state[q] = newest
         return Batch(list(found.values()), {**cursor, "i": i + 1}, f"{q}: {len(entries)} certs, {len(found)} new hostnames")
