@@ -59,7 +59,7 @@ def test_source_yield(db):
                              source_id=src.id, domain_id=d.id))  # fmt: skip
     db.commit()
     row = next(r for r in metrics.source_yield(db) if r["source"] == src.name)
-    assert row == {"source": src.name, "candidates": 4, "verified": 2, "stores": 1, "store_rate": 0.5}
+    assert row == {"source": src.name, "role": "discovery", "candidates": 4, "verified": 2, "stores": 1, "store_rate": 0.5}
 
 
 def test_metrics_endpoint_admin_only(client):
