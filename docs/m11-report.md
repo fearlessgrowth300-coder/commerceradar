@@ -1,13 +1,27 @@
-# M11 — data trust, accuracy and expansion (interim report, 2026-11-04 21:14 UTC)
+# M11 — data trust, accuracy and expansion (report, updated 2026-11-04 22:15 UTC)
 
 Branch `m10-discovery-quality` (deployed on the VPS, commit `965683c`, migrations up to 0015). **Not merged into `main`.**
 
 ## 1. Shopify ingestion (measured)
 - 17,028 `*.myshopify.com` hosts; 198 processed, 16,830 remaining (~250 verifications/h, 0 failures, avg 13 s).
-- Representative sample: 300 hosts chosen by seeded hash across the whole range (`m11_shopify_sample`, temporary table — drop after use), rank 0.
-  At 21:14: 66/300 processed → 48 confirmed, 3 probable, 6 inactive storefronts, 1 not ecommerce, 8 uncertain (7 scored 2, 1 HTTP 403), 0 unreachable.
-  50 of 51 stores live on the myshopify host itself; 1 redirected to a custom domain (alias). **Final sample figures still pending** — re-run `docs/m11-measure` queries (scratch `m11_measure.sql`) once 300/300.
-- Identity: 594 live stores, 6 merged duplicates, 2 platform-hosted aliases, 14 canonical suggestions.
+- Representative sample: 300 hosts chosen by seeded hash across the whole range, prioritised; **all 300 processed by 22:15 UTC**:
+
+  | Outcome | n | share |
+  |---|---|---|
+  | confirmed ecommerce | 194 | 64.7 % |
+  | probable ecommerce | 7 | 2.3 % |
+  | inactive storefront (password page / unavailable) | 40 | 13.3 % |
+  | uncertain | 55 | 18.3 % — 45 scored 2, 5 scored 3, 3 robots.txt disallow, 2 HTTP 403 |
+  | not ecommerce | 4 | 1.3 % |
+  | unreachable / failed | 0 | 0 % |
+
+  **Store rate 67.0 % (201/300; ~95 % interval ±5.3 pp).** 201 distinct stores, 0 duplicates; 199 live on the
+  myshopify host itself, 2 redirected to a custom domain (linked as `platform_hosted` aliases).
+  *Estimate, not a count:* applied to all 17,028 hosts this suggests roughly 10,500–12,300 stores once processed.
+  The 45 "scored 2" hosts are the main open question for the benchmark (likely young Shopify stores with few
+  visible products — not assumed either way). Temporary table `m11_shopify_sample` dropped.
+- Overall at 22:15: 452/17,028 myshopify hosts processed, 16,576 remaining; 240 verifications/h, 0 failures.
+- Identity (22:15): 756 live stores, 6 merged duplicates, 4 platform-hosted aliases, 22 canonical suggestions.
 
 ## 2. Accuracy benchmark
 **No figures: no human labels yet.** Built: stratified blind queue of 197 domains (`benchmark_queue`, batch `m11-1`), admin page `/admin/benchmark` (no verdict shown), report `GET /api/v1/admin/benchmark/report` (cells n<30 marked insufficient). A person must label them.
@@ -28,7 +42,6 @@ Measured 11/11 `*.mybigcommerce.com` storefronts send server-set `x-bc-store-id`
   and off-server copies of backups; merge into `main` (fast-forward) after owner approval.
 
 ## 7. Remaining
-1. Finish the 300-host Shopify sample measurement; drop `m11_shopify_sample`.
 2. Human labelling of the 197-domain queue → first precision/recall.
 3. Owner decisions: urlscan data, backup cron, merge approval.
 4. `.store` expansion after (1).
