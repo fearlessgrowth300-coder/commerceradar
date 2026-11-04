@@ -26,6 +26,7 @@ from app.config import settings
 from app.models import CrawlJob, Domain, Product, ProductObservation, Store, StoreObservation
 from app.security.ssrf import BlockedDestination, DnsFailure
 from app.services.fetcher import FetchError, SafeFetcher
+from app.services import signals
 from app.services.verification import PRODUCT_PATH, _robots
 
 AVAILABILITY = {
@@ -391,5 +392,7 @@ def extract_store(db: Session, store: Store, fetcher: SafeFetcher, max_pages: in
     store.last_observed_at = now
     if had_products and (stats.new or stats.changed or stats.removed):
         store.last_changed_at = now  # catalogue moving ⇒ monitoring re-checks sooner
+    db.flush()
+    signals.refresh_store(db, store, now)
     db.commit()
     return stats

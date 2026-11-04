@@ -1,9 +1,25 @@
 // Server component: talks to the API (never the DB). API_URL is the internal address (http://api:8000 in docker).
-import { API_URL, fmtDate, getJson } from "@/lib/api";
+import Link from "next/link";
+import { API_URL, fmtDate, getJson, PLATFORM_LABEL } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
 type Health = { status: string; checks: Record<string, string> };
+
+type Activity = {
+  platforms: { platform: string; stores: number }[];
+  recent_runs: { id: string; status: string; started_at: string | null; records_found: number; source_id: string }[];
+  recent_changes: { store_id: string; domain: string; type: string; data: Record<string, unknown>; observed_at: string }[];
+  signals: Record<string, number>;
+};
+
+function describe(c: Activity["recent_changes"][number]): string {
+  const d = c.data as Record<string, string>;
+  if (c.type === "activity_change") return `activity ${d.from ?? "?"} → ${d.to ?? "?"}`;
+  if (c.type === "platform_change") return `platform ${d.from} → ${d.to}`;
+  if (c.type === "signal_detected") return `signal: ${String(d.type).replaceAll("_", " ")}`;
+  return `signal resolved: ${String(d.type).replaceAll("_", " ")}`;
+}
 
 type Monitoring = {
   stores_due: number;
@@ -20,6 +36,7 @@ type Overview = {
   verified_stores: number;
   active_stores: number;
   inactive_stores: number;
+  new_stores_7d: number;
   discovery_runs: number;
   failed_jobs: number;
 };
@@ -29,16 +46,19 @@ const LABELS: [keyof Overview, string][] = [
   ["verified_stores", "Verified stores"],
   ["active_stores", "Active stores"],
   ["inactive_stores", "Inactive stores"],
+  ["new_stores_7d", "New stores (7 days)"],
   ["discovery_runs", "Discovery runs"],
   ["failed_jobs", "Failed jobs"],
 ];
 
 export default async function Dashboard() {
-  const [health, overview, mon] = await Promise.all([
+  const [health, overview, mon, act] = await Promise.all([
     getJson<Health>("/health"),
     getJson<Overview>("/api/v1/dashboard/overview"),
     getJson<Monitoring>("/api/v1/monitoring/status"),
+    getJson<Activity>("/api/v1/dashboard/activity"),
   ]);
+  const maxPlatform = Math.max(1, ...(act?.platforms ?? []).map((p) => p.stores));
 
   return (
     <div className="space-y-6">
@@ -80,6 +100,60 @@ export default async function Dashboard() {
           <p className="mt-3 text-sm text-slate-500">No domains yet. Submit one on the Discovery page.</p>
         )}
       </section>
+
+      {act && (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <section>
+            <h2 className="mb-2 text-sm font-medium text-slate-500">Platform distribution (verified stores)</h2>
+            {act.platforms.length === 0 ? (
+              <p className="text-sm text-slate-500">No verified stores yet.</p>
+            ) : (
+              <ul className="space-y-1 rounded-lg border border-slate-200 bg-white p-3 text-sm">
+                {act.platforms.map((p) => (
+                  <li key={p.platform} className="flex items-center gap-2">
+                    <Link href={`/stores?platform=${p.platform}`} className="w-40 shrink-0 hover:underline">{PLATFORM_LABEL[p.platform] ?? p.platform}</Link>
+                    <span className="h-2 rounded bg-slate-700" style={{ width: `${(p.stores / maxPlatform) * 60}%` }} />
+                    <span className="tabular-nums text-slate-600">{p.stores}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          <section>
+            <h2 className="mb-2 text-sm font-medium text-slate-500">Recent store changes</h2>
+            {act.recent_changes.length === 0 ? (
+              <p className="text-sm text-slate-500">No changes recorded yet.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white text-sm">
+                {act.recent_changes.map((c, i) => (
+                  <li key={i} className="flex flex-wrap justify-between gap-2 px-3 py-1.5">
+                    <span>
+                      <Link href={`/stores/${c.store_id}`} className="font-medium hover:underline">{c.domain}</Link> · {describe(c)}
+                    </span>
+                    <span className="text-xs text-slate-500">{fmtDate(c.observed_at)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          <section>
+            <h2 className="mb-2 text-sm font-medium text-slate-500">Recent discovery runs</h2>
+            {act.recent_runs.length === 0 ? (
+              <p className="text-sm text-slate-500">No runs yet.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white text-sm">
+                {act.recent_runs.map((r) => (
+                  <li key={r.id} className="flex justify-between px-3 py-1.5">
+                    <span>{r.status} · {r.records_found.toLocaleString()} found</span>
+                    <span className="text-xs text-slate-500">{fmtDate(r.started_at)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <Link href="/sources" className="mt-1 inline-block text-sm underline">Discovery history</Link>
+          </section>
+        </div>
+      )}
 
       {mon && (
         <section>

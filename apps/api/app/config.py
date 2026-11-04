@@ -32,7 +32,8 @@ class Settings(BaseSettings):
     inactive_after_failed_checks: int = 6
     inactive_min_days_since_success: int = 90
     stuck_after_minutes: int = 120
-    max_job_attempts: int = 6  # optional; urlscan search works keyless at lower limits
+    max_job_attempts: int = 6
+    signals_refresh_per_tick: int = 200  # optional; urlscan search works keyless at lower limits
 
 
 settings = Settings()

@@ -52,7 +52,17 @@ async function resumeRun(formData: FormData) {
 
 export default async function Sources({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const { error } = await searchParams;
-  const sources = await getJson<Source[]>("/api/v1/discovery/sources");
+  const [sources, runs] = await Promise.all([
+    getJson<Source[]>("/api/v1/discovery/sources"),
+    getJson<(Run & { source_id: string })[]>("/api/v1/discovery/runs?limit=30"),
+  ]);
+  const sourceName = Object.fromEntries((sources ?? []).map((s) => [s.id, s.name]));
+  const duration = (r: Run) => {
+    if (!r.started_at) return "—";
+    const end = r.completed_at ? new Date(r.completed_at).getTime() : Date.now();
+    const mins = Math.round((end - new Date(r.started_at).getTime()) / 60000);
+    return mins < 60 ? `${mins} min` : `${(mins / 60).toFixed(1)} h`;
+  };
   const anyActive = sources?.some((s) => s.last_run && ACTIVE.includes(s.last_run.status));
 
   return (
@@ -120,6 +130,44 @@ export default async function Sources({ searchParams }: { searchParams: Promise<
           })}
         </ul>
       )}
+
+      <section>
+        <h2 className="mb-2 font-medium">Discovery history</h2>
+        {!runs || runs.length === 0 ? (
+          <p className="text-sm text-slate-500">No runs yet.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-slate-200 text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Source</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 font-medium">Started</th>
+                  <th className="px-3 py-2 font-medium">Duration</th>
+                  <th className="px-3 py-2 font-medium">Found</th>
+                  <th className="px-3 py-2 font-medium">Stored</th>
+                  <th className="px-3 py-2 font-medium">Invalid</th>
+                  <th className="px-3 py-2 font-medium">Queued for verification</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.map((r) => (
+                  <tr key={r.id} className="border-b border-slate-100 last:border-0">
+                    <td className="px-3 py-2">{sourceName[r.source_id] ?? "—"}</td>
+                    <td className="px-3 py-2">{r.status}</td>
+                    <td className="px-3 py-2 text-slate-600">{fmtDate(r.started_at)}</td>
+                    <td className="px-3 py-2">{duration(r)}</td>
+                    <td className="px-3 py-2 tabular-nums">{r.records_found.toLocaleString()}</td>
+                    <td className="px-3 py-2 tabular-nums">{r.records_processed.toLocaleString()}</td>
+                    <td className="px-3 py-2 tabular-nums">{r.records_failed.toLocaleString()}</td>
+                    <td className="px-3 py-2 tabular-nums">{r.cursor?.verify_queued ?? 0}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

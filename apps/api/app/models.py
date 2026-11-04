@@ -136,6 +136,7 @@ class Store(Base):
     last_failed_check_at: Mapped[datetime | None] = _opt_ts()
     next_check_at: Mapped[datetime | None] = _opt_ts(index=True)
     last_changed_at: Mapped[datetime | None] = _opt_ts()  # activity / platform / catalogue change
+    signals_refreshed_at: Mapped[datetime | None] = _opt_ts(index=True)
     primary_platform: Mapped[str] = mapped_column(String(30), default="unknown", index=True)
     platform_confidence: Mapped[float | None] = mapped_column(Float)
     first_verified_at: Mapped[datetime | None] = _opt_ts(index=True)
@@ -207,6 +208,24 @@ class StoreObservation(Base):
     observation_data: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
     observed_at: Mapped[datetime] = _ts(index=True)
     source_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("discovery_sources.id"))
+
+
+class StoreSignal(Base):
+    """An evidence-based intelligence signal. One row per (store, type); resolved, never deleted."""
+
+    __tablename__ = "store_signals"
+    __table_args__ = (UniqueConstraint("store_id", "signal_type"), Index("ix_store_signals_type_active", "signal_type", "active"))
+    id: Mapped[uuid.UUID] = _pk()
+    store_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("stores.id"))
+    signal_type: Mapped[str] = mapped_column(String(50))
+    category: Mapped[str] = mapped_column(String(20), index=True)  # growth | change | opportunity | health
+    basis: Mapped[str] = mapped_column(String(10))  # observed | inferred
+    summary: Mapped[str] = mapped_column(Text)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    first_detected_at: Mapped[datetime] = _ts()
+    last_detected_at: Mapped[datetime] = _ts(index=True)
+    resolved_at: Mapped[datetime | None] = _opt_ts()
 
 
 class CrawlJob(Base):
