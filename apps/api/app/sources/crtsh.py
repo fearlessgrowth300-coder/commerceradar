@@ -61,7 +61,12 @@ class CrtSh:
         if i >= len(qs):
             return Batch([], None, f"{len(qs)} queries done")
         q = qs[i]
-        r = get_ok(ctx.fetcher, f"https://crt.sh/?q={quote(q)}&output=json&exclude=expired&deduplicate=Y")
+        # Full history (no exclude=expired): with 90-day certificates, "earliest unexpired" is always
+        # recent and would make every domain look new. Queries are per-domain, so history stays small.
+        try:
+            r = get_ok(ctx.fetcher, f"https://crt.sh/?q={quote(q)}&output=json&deduplicate=Y")
+        except SourceError as e:  # one oversized / rejected query must not stop the run
+            return Batch([], {**cursor, "i": i + 1}, f"{q}: skipped ({e})")
         try:
             entries = json.loads(r.text or "[]")
         except ValueError as e:
@@ -76,6 +81,9 @@ class CrtSh:
                 continue
             newest = max(newest, cid)
             for h in hostnames(e.get("name_value", "")):
-                found.setdefault(h, Found(f"https://{h}/", _seen(e)))
+                seen = _seen(e)
+                prev = found.get(h)
+                if prev is None or (seen and (prev.seen_at is None or seen < prev.seen_at)):
+                    found[h] = Found(f"https://{h}/", seen)  # keep the earliest certificate per hostname
         state[q] = newest
         return Batch(list(found.values()), {**cursor, "i": i + 1}, f"{q}: {len(entries)} certs, {len(found)} new hostnames")

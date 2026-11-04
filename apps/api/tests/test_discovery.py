@@ -85,6 +85,41 @@ def test_two_sources_same_domain_one_candidate_one_job(db):
     assert len(jobs) == 1 and len(queued) == 1  # verified once, whichever source saw it first
 
 
+def test_ingest_keeps_earliest_sighting(db):
+    src = make_source(db, "crtsh", {})
+    run = discovery.start_run(db, src)
+    url = f"https://early{tag()}.example/"
+    discovery.ingest(db, src.id, run, [Found(url, datetime(2026, 9, 1, tzinfo=UTC))], 0, lambda j: None)
+    discovery.ingest(db, src.id, run, [Found(url, datetime(2021, 3, 5, tzinfo=UTC))], 0, lambda j: None)  # full history
+    discovery.ingest(db, src.id, run, [Found(url, datetime(2026, 10, 1, tzinfo=UTC))], 0, lambda j: None)  # later, ignored
+    row = db.scalar(select(DiscoveredUrl).where(DiscoveredUrl.normalized_url == url))
+    db.refresh(row)
+    assert row.first_discovered_at.replace(tzinfo=UTC).date().isoformat() == "2021-03-05"
+
+
+def test_crtsh_keeps_earliest_certificate_per_host_and_uses_full_history(db):
+    t = tag()
+    seen_urls = []
+
+    def handler(request):
+        seen_urls.append(str(request.url))
+        return httpx.Response(200, json=[
+            {"id": 5, "name_value": f"h{t}.example", "not_before": "2026-09-01T00:00:00"},
+            {"id": 2, "name_value": f"h{t}.example", "not_before": "2019-01-01T00:00:00"},
+        ])
+
+    ctx = Ctx(SafeFetcher(fake_dns({"crt.sh"}), transport(handler)), db)
+    b = crtsh.CrtSh().fetch_batch({"queries": [f"%.{t}.example"], "seed_from_stores": False}, {}, {}, ctx)
+    assert b.found[0].seen_at == datetime(2019, 1, 1, tzinfo=UTC)
+    assert "exclude=expired" not in seen_urls[0]
+
+
+def test_crtsh_oversized_query_is_skipped_not_fatal(db):
+    ctx = Ctx(SafeFetcher(fake_dns({"crt.sh"}), transport(lambda r: httpx.Response(404))), db)
+    b = crtsh.CrtSh().fetch_batch({"queries": ["%.a.example", "%.b.example"], "seed_from_stores": False}, {}, {}, ctx)
+    assert b.found == [] and b.cursor == {"i": 1} and "skipped" in b.note
+
+
 def test_ingest_respects_budget_and_skips_known_domains(db, client, monkeypatch):
     monkeypatch.setattr(v1, "_enqueue", lambda job_id: None)
     known = f"known{tag()}.example"
