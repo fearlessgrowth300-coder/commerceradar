@@ -24,7 +24,8 @@ class Settings(BaseSettings):
     # ---- monitoring (spec §15); every interval is an env var, e.g. RECHECK_ACTIVE_DAYS=30 ----
     monitor_tick_seconds: int = 600  # how often the scheduler tick runs
     monitor_rechecks_per_tick: int = 10  # due stores re-verified per tick
-    monitor_backlog_per_tick: int = 20  # never-verified candidates per tick (~2.9k/day at defaults)
+    monitor_backlog_per_tick: int = 60  # max never-verified candidates queued per tick
+    monitor_max_in_flight: int = 40  # adaptive: only top the queue up to this many jobs (measured bottleneck)
     monitor_candidate_rechecks_per_tick: int = 5
     auto_extract_products: bool = True  # product re-check after every positive store check
     recheck_new_store_days: float = 7
@@ -42,7 +43,13 @@ class Settings(BaseSettings):
     inactive_min_days_since_success: int = 90
     stuck_after_minutes: int = 120
     max_job_attempts: int = 6
-    signals_refresh_per_tick: int = 200  # optional; urlscan search works keyless at lower limits
+    signals_refresh_per_tick: int = 200
+
+    # ---- scale / operations (M9) ----
+    worker_concurrency: int = 2  # same value the worker is started with; used for capacity estimates
+    vps_monthly_cost_usd: float = 0  # optional: enables the $/store estimate in /admin/metrics
+    job_evidence_retention_days: int = 90  # older, superseded verification evidence is compacted
+    compact_per_tick: int = 500  # optional; urlscan search works keyless at lower limits
 
 
 settings = Settings()

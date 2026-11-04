@@ -14,7 +14,7 @@ from app.api.deps import Ctx, admin, current
 from app.config import settings
 from app.db import get_db
 from app.models import Organization, SavedSearch, User
-from app.services import accounts, billing, domains, workspace
+from app.services import accounts, billing, domains, metrics, workspace
 
 public = APIRouter(prefix="/api/v1")
 router = APIRouter(prefix="/api/v1")
@@ -253,3 +253,9 @@ def unsuppress(domain: str, db: Session = Depends(get_db)):
     except (workspace.NotFound, domains.InvalidDomain) as e:
         raise HTTPException(404, "not suppressed") from e
 
+
+
+@router.get("/admin/metrics", dependencies=[Depends(admin)])
+def admin_metrics(db: Session = Depends(get_db)):
+    """Measured throughput, durations, source yield, storage and queue depth (last 24 h)."""
+    return metrics.snapshot(db)

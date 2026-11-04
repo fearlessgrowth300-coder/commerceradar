@@ -8,6 +8,24 @@ type Overview = {
   suppressed_domains: number;
 };
 type Suppression = { domain: string; reason: string | null; suppressed_at: string };
+type JobStat = { completed: number; succeeded: number; failed: number; per_hour: number; avg_seconds: number | null; p95_seconds: number | null; retried: number };
+type Metrics = {
+  jobs: Record<string, JobStat>;
+  verification: {
+    pending_backlog: number;
+    measured_per_hour: number;
+    worker_capacity_per_hour_estimate: number | null;
+    backlog_eta_hours: number | null;
+    new_stores_24h: number;
+    worker_seconds_per_new_store: number | null;
+    usd_per_new_store_estimate?: number;
+  };
+  source_yield: { source: string; candidates: number; verified: number; stores: number; store_rate: number | null }[];
+  storage: { database_bytes?: number; bytes_per_domain?: number | null; tables?: { table: string; rows: number; bytes: number }[] };
+  queues: Record<string, number>;
+};
+
+const mb = (b?: number) => (b == null ? "—" : `${(b / 1048576).toFixed(1)} MB`);
 
 // Plain helper, not an action: only the fixed actions below can reach it.
 async function call(path: string, method: string, body?: unknown) {
@@ -41,7 +59,11 @@ export default async function Admin({ searchParams }: { searchParams: Promise<{ 
   const me = await getJson<Me>("/api/v1/auth/me");
   if (!me?.is_admin) notFound();
   const { error } = await searchParams;
-  const [ov, sup] = await Promise.all([getJson<Overview>("/api/v1/admin/overview"), getJson<Suppression[]>("/api/v1/admin/suppressions")]);
+  const [ov, sup, m] = await Promise.all([
+    getJson<Overview>("/api/v1/admin/overview"),
+    getJson<Suppression[]>("/api/v1/admin/suppressions"),
+    getJson<Metrics>("/api/v1/admin/metrics"),
+  ]);
   if (!ov) return <p className="text-sm text-red-700">API unreachable.</p>;
 
   return (
@@ -49,6 +71,47 @@ export default async function Admin({ searchParams }: { searchParams: Promise<{ 
       <h1 className="text-lg font-semibold">Admin</h1>
       {error && <p className="text-red-700">{error}</p>}
       <p className="text-slate-600">{ov.users.length} users · {ov.organizations.length} organizations · {ov.active_sessions} active sessions · {ov.suppressed_domains} suppressed domains</p>
+
+      {m && (
+        <section>
+          <h2 className="mb-2 font-medium">System metrics (measured, last 24 h)</h2>
+          <div className="rounded-lg border border-slate-200 bg-white p-3">
+            <p>
+              Verifications: <b>{m.verification.measured_per_hour}/h</b> measured · worker capacity ≈{" "}
+              {m.verification.worker_capacity_per_hour_estimate ?? "—"}/h · backlog {m.verification.pending_backlog.toLocaleString()} · ETA{" "}
+              {m.verification.backlog_eta_hours != null ? `${m.verification.backlog_eta_hours} h` : "—"}
+            </p>
+            <p className="mt-1">
+              New stores (24 h): {m.verification.new_stores_24h} · worker-seconds per new store: {m.verification.worker_seconds_per_new_store ?? "—"}
+              {m.verification.usd_per_new_store_estimate != null && ` · ≈ $${m.verification.usd_per_new_store_estimate} per new store (estimate)`}
+            </p>
+            <p className="mt-1">
+              Database {mb(m.storage.database_bytes)} ({m.storage.bytes_per_domain ?? "—"} bytes/domain) · queues{" "}
+              {Object.entries(m.queues).map(([k, v]) => `${k} ${v}`).join(", ")}
+            </p>
+            <table className="mt-2 w-full text-left">
+              <thead className="text-slate-500">
+                <tr><th>Job</th><th>Done</th><th>Failed</th><th>Retried</th><th>/h</th><th>avg s</th><th>p95 s</th></tr>
+              </thead>
+              <tbody>
+                {Object.entries(m.jobs).map(([k, j]) => (
+                  <tr key={k}><td>{k}</td><td>{j.succeeded}</td><td>{j.failed}</td><td>{j.retried}</td><td>{j.per_hour}</td><td>{j.avg_seconds ?? "—"}</td><td>{j.p95_seconds ?? "—"}</td></tr>
+                ))}
+              </tbody>
+            </table>
+            <table className="mt-2 w-full text-left">
+              <thead className="text-slate-500">
+                <tr><th>Source</th><th>Candidates</th><th>Verified</th><th>Stores</th><th>Store rate</th></tr>
+              </thead>
+              <tbody>
+                {m.source_yield.map((y) => (
+                  <tr key={y.source}><td>{y.source}</td><td>{y.candidates.toLocaleString()}</td><td>{y.verified}</td><td>{y.stores}</td><td>{y.store_rate != null ? `${Math.round(y.store_rate * 100)}%` : "—"}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       <section>
         <h2 className="mb-2 font-medium">Organizations</h2>
