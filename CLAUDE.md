@@ -8,7 +8,10 @@ The core asset is the **database** (quality, coverage, freshness, history), not 
 - M2 Domain ingestion + verification: done (61 tests on Postgres; live-checked on VPS 2026-11-04). Known limit: no JS rendering — JS-only storefronts come out `uncertain`.
 - M3 Platform detection: done (78 tests; live: allbirds.com → shopify 1.0). Rules in `app/services/platforms.py` (one rule list per platform; weak/ambiguous ⇒ unknown, confirmed store w/o fingerprint ⇒ custom 0.3). Only runs for confirmed/probable stores.
 - Known limits: bot walls (403/429) ⇒ uncertain (not bypassed); stores whose homepage lacks cart/structured data (e.g. camelbak.com, SFCC) ⇒ uncertain; no JS rendering.
-- Next: M4 discovery source integrations.
+- M4 Discovery sources: done (103 tests; live 2026-11-04: common_crawl 8.6k hosts, urlscan 500, crt.sh 104, crawler 5 → 9k candidate domains, 0 duplicates). Adapters in `app/sources/` (`fetch_batch(config, cursor, state, ctx)`); one ingest path `app/services/discovery.py`; `discovery.run_batch` task chains one batch at a time (seq + expiring claim, resumable).
+  - Common Crawl reads raw ZipNum index on data.commoncrawl.org via Range requests (the index.commoncrawl.org CDX server 504s). crt.sh only answers narrow queries (TLD-wide ⇒ 502) and takes 15-60s. urlscan keyless = 30 searches/min.
+  - Fetcher tries IPv4 first: Docker network has no IPv6 route.
+- Next: M5 product extraction. Verification backlog (pending domains with no job) needs a sweep — M6.
 
 ## Layout
 - `apps/api/app` — FastAPI + SQLAlchemy + Celery in ONE package (modular monolith). API = `uvicorn app.main:app`, worker = `celery -A app.worker worker`. Same image, different command, so workers can move to other machines later.

@@ -49,6 +49,20 @@ def page(name: str) -> httpx.Response:
     return httpx.Response(200, text=html(name), headers={"content-type": "text/html; charset=utf-8"})
 
 
+def test_fetcher_prefers_ipv4_and_falls_back_on_connect_error():
+    tried = []
+
+    def handler(request):
+        tried.append(request.url.host)
+        if request.url.host == "93.184.216.35":
+            raise httpx.ConnectError("unreachable")
+        return httpx.Response(200, text="ok", headers={"content-type": "text/plain"})
+
+    dns = lambda host: ["2606:2800:220:1::1", "93.184.216.35", "93.184.216.34"]  # noqa: E731 - AAAA listed first
+    r = SafeFetcher(dns, httpx.MockTransport(handler)).fetch("https://dual.example/")
+    assert r.text == "ok" and tried == ["93.184.216.35", "93.184.216.34"]  # v4 first, then next v4; v6 not needed
+
+
 # ---------- normalization ----------
 
 

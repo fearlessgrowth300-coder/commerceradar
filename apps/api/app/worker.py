@@ -16,7 +16,7 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
     include=["app.tasks"],
     # One queue per task category so each can get its own worker pool later.
-    task_routes={"verification.*": {"queue": "verification"}},
+    task_routes={"verification.*": {"queue": "verification"}, "discovery.*": {"queue": "discovery"}},
 )
 
 

@@ -21,6 +21,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
     func,
 )
@@ -65,6 +66,8 @@ class DiscoverySource(Base):
     source_type: Mapped[str] = mapped_column(String(50))
     configuration: Mapped[dict[str, Any]] = mapped_column(JSONType, default=dict)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Incremental progress that outlives a single run (e.g. highest crt.sh id seen per query).
+    state: Mapped[dict[str, Any] | None] = mapped_column(JSONType, default=dict)
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = _updated()
 
@@ -80,16 +83,22 @@ class DiscoveryRun(Base):
     records_processed: Mapped[int] = mapped_column(Integer, default=0)
     records_failed: Mapped[int] = mapped_column(Integer, default=0)
     error_summary: Mapped[str | None] = mapped_column(Text)
+    # Where the next batch starts; lets an interrupted run resume. None once finished.
+    cursor: Mapped[dict[str, Any] | None] = mapped_column(JSONType)
 
 
 class DiscoveredUrl(Base):
-    # ponytail: no URL-level unique constraint yet; dedup (hash of normalized_url) lands with source adapters in M4.
+    """One row per (source, URL): the same URL seen by two sources keeps both provenances,
+    while the domain itself is deduplicated in `domains`."""
+
     __tablename__ = "discovered_urls"
+    __table_args__ = (UniqueConstraint("source_id", "normalized_url"),)
     id: Mapped[uuid.UUID] = _pk()
     normalized_url: Mapped[str] = mapped_column(Text)
     hostname: Mapped[str] = mapped_column(String(253), index=True)
     source_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("discovery_sources.id"), index=True)
     discovery_run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("discovery_runs.id"), index=True)
+    domain_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("domains.id"), index=True)
     first_discovered_at: Mapped[datetime] = _ts(index=True)
     last_discovered_at: Mapped[datetime] = _ts()
     processing_status: Mapped[str] = mapped_column(String(20), default="pending", index=True)

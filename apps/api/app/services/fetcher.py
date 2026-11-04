@@ -28,6 +28,7 @@ class FetchResult:
     redirects: list[str] = field(default_factory=list)
     headers: dict[str, str] = field(default_factory=dict)  # final response, lower-cased names
     set_cookies: list[str] = field(default_factory=list)  # every Set-Cookie seen along the redirect chain
+    body: bytes = b""  # raw bytes (e.g. gzip blocks); `text` is the decoded form
 
 
 class SafeFetcher:
@@ -36,22 +37,23 @@ class SafeFetcher:
         resolver: Resolver = system_resolver,
         transport: httpx.BaseTransport | None = None,
         max_bytes: int = 2_000_000,
+        timeout: float = 10.0,
     ):
         self.resolver = resolver
         self.max_bytes = max_bytes
         self.client = httpx.Client(
             transport=transport,
-            timeout=httpx.Timeout(10.0, connect=5.0),
+            timeout=httpx.Timeout(timeout, connect=min(timeout, 15.0) if timeout > 10 else 5.0),
             follow_redirects=False,
             trust_env=False,  # never route through env-configured proxies
             headers={"User-Agent": settings.bot_user_agent, "Accept": "text/html,application/xhtml+xml,*/*;q=0.5"},
         )
 
-    def fetch(self, url: str) -> FetchResult:
+    def fetch(self, url: str, headers: dict[str, str] | None = None) -> FetchResult:
         redirects: list[str] = []
         set_cookies: list[str] = []
         for _ in range(MAX_REDIRECTS + 1):
-            resp, text, truncated = self._fetch_once(url)
+            resp, body, truncated = self._fetch_once(url, headers or {})
             set_cookies += resp.headers.get_list("set-cookie")
             if resp.is_redirect and "location" in resp.headers:
                 url = urljoin(url, resp.headers["location"])
@@ -63,15 +65,16 @@ class SafeFetcher:
                 url=url,
                 status=resp.status_code,
                 content_type=resp.headers.get("content-type", "").lower(),
-                text=text,
+                text=body.decode(resp.encoding or "utf-8", errors="replace"),
                 truncated=truncated,
                 redirects=redirects,
                 headers={k.lower(): v for k, v in resp.headers.items() if k.lower() != "set-cookie"},
                 set_cookies=set_cookies,
+                body=body,
             )
         raise BlockedDestination(f"more than {MAX_REDIRECTS} redirects")
 
-    def _fetch_once(self, url: str) -> tuple[httpx.Response, str, bool]:
+    def _fetch_once(self, url: str, headers: dict[str, str]) -> tuple[httpx.Response, bytes, bool]:
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
             raise BlockedDestination(f"unsupported URL {url!r}")
@@ -87,26 +90,31 @@ class SafeFetcher:
         except ValueError:
             pass
 
-        ip = resolve_public(host, self.resolver)[0]
-        netloc = f"[{ip}]" if ":" in ip else ip
-        if parts.port:
-            netloc += f":{parts.port}"
-        pinned = parts._replace(netloc=netloc).geturl()
+        # Every address is already validated public. IPv4 first: many hosts (incl. Docker's default
+        # network) have no IPv6 route, and DNS often lists AAAA first. Fall through on connect errors.
+        ips = sorted(resolve_public(host, self.resolver), key=lambda a: ":" in a)
         host_header = host if not parts.port else f"{host}:{parts.port}"
-
-        try:
-            with self.client.stream(
-                "GET", pinned, headers={"Host": host_header}, extensions={"sni_hostname": host}
-            ) as resp:
-                body = bytearray()
-                truncated = False
-                for chunk in resp.iter_bytes():
-                    body.extend(chunk)
-                    if len(body) > self.max_bytes:
-                        truncated = True
-                        del body[self.max_bytes :]
-                        break
-                text = body.decode(resp.encoding or "utf-8", errors="replace")
-                return resp, text, truncated
-        except httpx.HTTPError as e:
-            raise FetchError(f"{type(e).__name__} fetching {url}") from e
+        last: httpx.HTTPError | None = None
+        for ip in ips:
+            netloc = f"[{ip}]" if ":" in ip else ip
+            if parts.port:
+                netloc += f":{parts.port}"
+            pinned = parts._replace(netloc=netloc).geturl()
+            try:
+                with self.client.stream(
+                    "GET", pinned, headers={**headers, "Host": host_header}, extensions={"sni_hostname": host}
+                ) as resp:
+                    body = bytearray()
+                    truncated = False
+                    for chunk in resp.iter_bytes():
+                        body.extend(chunk)
+                        if len(body) > self.max_bytes:
+                            truncated = True
+                            del body[self.max_bytes :]
+                            break
+                    return resp, bytes(body), truncated
+            except httpx.ConnectError as e:
+                last = e  # unreachable address: try the next one
+            except httpx.HTTPError as e:
+                raise FetchError(f"{type(e).__name__} fetching {url}") from e
+        raise FetchError(f"{type(last).__name__} fetching {url} (tried {len(ips)} addresses)") from last

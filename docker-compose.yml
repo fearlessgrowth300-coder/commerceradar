@@ -42,7 +42,7 @@ services:
 
   worker:
     build: ./apps/api
-    command: celery -A app.worker worker -Q celery,verification --loglevel=info --concurrency=${WORKER_CONCURRENCY:-2}
+    command: celery -A app.worker worker -Q celery,verification,discovery --loglevel=info --concurrency=${WORKER_CONCURRENCY:-2}
     environment: *api-env
     volumes: [./apps/api:/app]
     stop_grace_period: 60s # let running tasks finish (warm shutdown)
