@@ -104,7 +104,7 @@ def run_discovery_batch(self, run_id: str, seq: int) -> str:
         config = source.configuration or {}
         cursor = _unclaimed(run.cursor)
         state = dict(source.state or {})
-        fetcher = SafeFetcher(max_bytes=adapter.max_bytes)
+        fetcher = SafeFetcher(max_bytes=adapter.max_bytes, timeout=adapter.timeout)
         try:
             batch = adapter.fetch_batch(config, cursor, state, sources.Ctx(fetcher, db))
         except FetchError as e:  # transient: same batch again later, cursor untouched

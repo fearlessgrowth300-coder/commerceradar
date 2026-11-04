@@ -16,6 +16,7 @@ from app.sources import Batch, Ctx, Found, SourceError, get_ok
 
 class UrlScan:
     max_bytes = 5_000_000
+    timeout = 30.0
 
     def fetch_batch(self, config: dict, cursor: dict, state: dict, ctx: Ctx) -> Batch:
         query = config.get("query") or ""

@@ -117,6 +117,7 @@ def parse_block(raw: bytes, prefix: str) -> tuple[list[Found], bool]:
 
 class CommonCrawl:
     max_bytes = 4_000_000
+    timeout = 30.0
 
     def fetch_batch(self, config: dict, cursor: dict, state: dict, ctx: Ctx) -> Batch:
         index = config.get("index", "")

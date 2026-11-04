@@ -37,12 +37,13 @@ class SafeFetcher:
         resolver: Resolver = system_resolver,
         transport: httpx.BaseTransport | None = None,
         max_bytes: int = 2_000_000,
+        timeout: float = 10.0,
     ):
         self.resolver = resolver
         self.max_bytes = max_bytes
         self.client = httpx.Client(
             transport=transport,
-            timeout=httpx.Timeout(10.0, connect=5.0),
+            timeout=httpx.Timeout(timeout, connect=min(timeout, 15.0) if timeout > 10 else 5.0),
             follow_redirects=False,
             trust_env=False,  # never route through env-configured proxies
             headers={"User-Agent": settings.bot_user_agent, "Accept": "text/html,application/xhtml+xml,*/*;q=0.5"},

@@ -45,6 +45,7 @@ def _seen(entry: dict) -> datetime | None:
 
 class CrtSh:
     max_bytes = 20_000_000
+    timeout = 90.0  # crt.sh routinely takes 15-60s per query
 
     def queries(self, config: dict, ctx: Ctx) -> list[str]:
         qs = list(config.get("queries") or [])

@@ -72,6 +72,7 @@ def links(html: str, page_url: str) -> list[str]:
 
 class LinkCrawler:
     max_bytes = 2_000_000
+    timeout = 10.0
 
     def fetch_batch(self, config: dict, cursor: dict, state: dict, ctx: Ctx) -> Batch:
         recrawl = datetime.now(UTC) - timedelta(days=int(config.get("recrawl_days", 30)))

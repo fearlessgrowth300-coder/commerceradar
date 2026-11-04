@@ -43,6 +43,7 @@ class Ctx:
 
 class Source(Protocol):
     max_bytes: int  # response cap for this source's fetcher
+    timeout: float  # seconds; public data services can be slow
 
     def fetch_batch(self, config: dict, cursor: dict, state: dict, ctx: Ctx) -> Batch: ...
 
