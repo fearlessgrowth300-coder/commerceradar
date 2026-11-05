@@ -29,7 +29,7 @@ def job_stats(db: Session, now: datetime, hours: int = 24) -> dict:
     since = now - timedelta(hours=hours)
     rows = db.execute(
         select(CrawlJob.job_type, CrawlJob.status, CrawlJob.started_at, CrawlJob.completed_at, CrawlJob.attempts)
-        .where(CrawlJob.completed_at >= since)
+        .where(CrawlJob.completed_at >= since, CrawlJob.completed_at < now)
     ).all()
     out: dict[str, dict] = {}
     # Rate over the time actually observed: a system that started 3 h ago must not be averaged over 24 h.
@@ -207,7 +207,7 @@ def processing_cost(db: Session, now: datetime | None = None, days: int = 7) -> 
     since = now - timedelta(days=days)
     jobs = db.execute(
         select(CrawlJob.job_type, CrawlJob.domain_id, CrawlJob.started_at, CrawlJob.completed_at)
-        .where(CrawlJob.status == "succeeded", CrawlJob.completed_at >= since, CrawlJob.job_type.in_(("verify", "products")))
+        .where(CrawlJob.status == "succeeded", CrawlJob.completed_at >= since, CrawlJob.completed_at < now, CrawlJob.job_type.in_(("verify", "products")))
     ).all()  # fmt: skip
     dom_ids = {d for _, d, _, _ in jobs if d}
     found_by: dict = {}
