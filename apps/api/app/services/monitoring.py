@@ -257,6 +257,9 @@ def tick(
 
     out["alerts_created"] = workspace.run_alerts(db, now)
     out.update(compact_history(db, now))
+    from app.services import metrics
+
+    out["metric_snapshot_rows"] = metrics.take_daily_snapshot(db, now)
     return out
 
 

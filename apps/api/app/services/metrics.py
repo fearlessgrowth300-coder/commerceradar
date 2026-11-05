@@ -126,9 +126,96 @@ def snapshot(db: Session, now: datetime | None = None) -> dict:
             "worker_seconds_per_new_store": round(worker_seconds / stores_24h) if stores_24h else None,
         },
         "source_yield": source_yield(db),
+        "unique_contribution": unique_contribution(db, now),
         "storage": storage(db),
         "queues": queues(),
     }
     if settings.vps_monthly_cost_usd and stores_24h:
         out["verification"]["usd_per_new_store_estimate"] = round(settings.vps_monthly_cost_usd / (stores_24h * 30), 4)
     return out
+
+
+
+# ---------- unique-store contribution (M12-A) ----------
+
+
+def unique_contribution(db: Session, now: datetime | None = None, days: int = 7) -> list[dict]:
+    """Per discovery source, counted on LIVE STORES (not candidate domains), alias-aware:
+    a store is attributed to every source that found any of its current domains (primary or alias).
+      unique_stores  found by this source and no other source
+      shared_stores  also found by at least one other source
+      verify_seconds_7d / seconds_per_new_store  worker time spent verifying this source's candidates
+    Merged, suppressed and manually-submitted-only stores are excluded from per-source counts."""
+    from app.models import StoreDomain
+
+    now = now or datetime.now(UTC)
+    since = now - timedelta(days=days)
+    pairs = db.execute(
+        select(DiscoverySource.name, Store.id)
+        .join(DiscoveredUrl, DiscoveredUrl.source_id == DiscoverySource.id)
+        .join(StoreDomain, (StoreDomain.domain_id == DiscoveredUrl.domain_id) & StoreDomain.valid_to.is_(None)
+              & StoreDomain.role.in_(("primary", "alias")))
+        .join(Store, Store.id == StoreDomain.store_id)
+        .join(Domain, Domain.id == Store.domain_id)
+        .where(Store.merged_into_store_id.is_(None), Domain.suppressed_at.is_(None))
+        .distinct()
+    ).all()  # fmt: skip
+    by_store: dict = {}
+    for src, sid in pairs:
+        by_store.setdefault(sid, set()).add(src)
+    new_ids = set(db.scalars(select(Store.id).where(Store.first_verified_at >= since, Store.merged_into_store_id.is_(None))))
+
+    sources = db.execute(select(DiscoverySource.name, DiscoverySource.id, DiscoverySource.restricted, DiscoverySource.enabled)).all()
+    out = []
+    for name, sid, restricted, enabled in sorted(sources):
+        candidates = db.scalar(select(func.count(func.distinct(DiscoveredUrl.domain_id))).where(DiscoveredUrl.source_id == sid)) or 0
+        processed = db.scalar(
+            select(func.count(func.distinct(Domain.id))).join(DiscoveredUrl, DiscoveredUrl.domain_id == Domain.id)
+            .where(DiscoveredUrl.source_id == sid, Domain.verification_status != "pending")
+        ) or 0  # fmt: skip
+        mine = [st for st, srcs in by_store.items() if name in srcs]
+        unique = [st for st in mine if by_store[st] == {name}]
+        jobs = db.execute(
+            select(CrawlJob.started_at, CrawlJob.completed_at)
+            .where(CrawlJob.job_type == "verify", CrawlJob.status == "succeeded", CrawlJob.completed_at >= since,
+                   CrawlJob.domain_id.in_(select(DiscoveredUrl.domain_id).where(DiscoveredUrl.source_id == sid)))
+        ).all()  # fmt: skip
+        secs = sum((c - s).total_seconds() for s, c in jobs if s and c)
+        new_here = len([st for st in mine if st in new_ids])
+        out.append({
+            "source": name, "restricted": bool(restricted), "enabled": bool(enabled),
+            "candidates": candidates, "processed": processed, "stores": len(mine),
+            "unique_stores": len(unique), "shared_stores": len(mine) - len(unique),
+            "store_rate": round(len(mine) / processed, 3) if processed else None,
+            "verify_jobs_7d": len(jobs), "verify_seconds_7d": round(secs),
+            "new_stores_7d": new_here, "seconds_per_new_store": round(secs / new_here) if new_here else None,
+        })  # fmt: skip
+    return out
+
+
+def take_daily_snapshot(db: Session, now: datetime | None = None) -> int:
+    """Idempotent: at most one value per (day, metric, source)."""
+    from app.models import MetricSnapshot
+
+    now = now or datetime.now(UTC)
+    day = now.strftime("%Y-%m-%d")
+    if db.scalar(select(func.count()).select_from(MetricSnapshot).where(MetricSnapshot.taken_on == day)):
+        return 0
+    rows = [
+        ("live_stores", "", db.scalar(select(func.count()).select_from(Store).where(Store.merged_into_store_id.is_(None))) or 0),
+        ("candidate_domains", "", db.scalar(select(func.count()).select_from(Domain)) or 0),
+        ("pending_backlog", "", db.scalar(select(func.count()).select_from(Domain).where(Domain.verification_status == "pending")) or 0),
+    ]
+    for r in unique_contribution(db, now):
+        for k in ("stores", "unique_stores", "shared_stores", "processed", "candidates"):
+            rows.append((f"source_{k}", r["source"], r[k]))
+    db.add_all(MetricSnapshot(taken_on=day, metric=m, source=src, value=float(v)) for m, src, v in rows)
+    db.commit()
+    return len(rows)
+
+
+def history(db: Session, metric: str, days: int = 90) -> list[dict]:
+    from app.models import MetricSnapshot
+
+    q = select(MetricSnapshot).where(MetricSnapshot.metric == metric).order_by(MetricSnapshot.taken_on.desc(), MetricSnapshot.source)
+    return [{"day": m.taken_on, "source": m.source, "value": m.value} for m in db.scalars(q.limit(days * 20))]

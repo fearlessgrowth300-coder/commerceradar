@@ -263,6 +263,11 @@ def unsuppress(domain: str, ctx: Ctx = Depends(admin), db: Session = Depends(get
 
 
 
+@router.get("/admin/metrics/history", dependencies=[Depends(admin)])
+def admin_metric_history(metric: str, days: int = 90, db: Session = Depends(get_db)):
+    return metrics.history(db, metric[:60], max(1, min(days, 365)))
+
+
 @router.get("/admin/metrics", dependencies=[Depends(admin)])
 def admin_metrics(db: Session = Depends(get_db)):
     """Measured throughput, durations, source yield, storage and queue depth (last 24 h)."""

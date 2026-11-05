@@ -23,6 +23,10 @@ type Metrics = {
   source_yield: { source: string; candidates: number; verified: number; stores: number; store_rate: number | null }[];
   storage: { database_bytes?: number; bytes_per_domain?: number | null; tables?: { table: string; rows: number; bytes: number }[] };
   queues: Record<string, number>;
+  unique_contribution?: {
+    source: string; restricted: boolean; candidates: number; processed: number; stores: number;
+    unique_stores: number; shared_stores: number; store_rate: number | null; new_stores_7d: number; seconds_per_new_store: number | null;
+  }[];
 };
 
 const mb = (b?: number) => (b == null ? "—" : `${(b / 1048576).toFixed(1)} MB`);
@@ -100,6 +104,21 @@ export default async function Admin({ searchParams }: { searchParams: Promise<{ 
                 ))}
               </tbody>
             </table>
+            {m.unique_contribution && (
+              <table className="mt-2 w-full text-left">
+                <thead className="text-slate-500">
+                  <tr><th>Source</th><th>Live stores</th><th>Only this source</th><th>Shared</th><th>New (7 d)</th><th>Worker s / new store</th></tr>
+                </thead>
+                <tbody>
+                  {m.unique_contribution.map((u) => (
+                    <tr key={u.source}>
+                      <td>{u.source}{u.restricted && " (restricted)"}</td><td>{u.stores}</td><td>{u.unique_stores}</td>
+                      <td>{u.shared_stores}</td><td>{u.new_stores_7d}</td><td>{u.seconds_per_new_store ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
             <table className="mt-2 w-full text-left">
               <thead className="text-slate-500">
                 <tr><th>Source</th><th>Candidates</th><th>Verified</th><th>Stores</th><th>Store rate</th></tr>

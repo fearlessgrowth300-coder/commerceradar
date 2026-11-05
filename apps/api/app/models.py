@@ -464,3 +464,16 @@ class BenchmarkQueue(Base):
     status: Mapped[str] = mapped_column(String(20), default="open", index=True)  # open | labelled | cannot_tell
     created_at: Mapped[datetime] = _ts()
     done_at: Mapped[datetime | None] = _opt_ts()
+
+
+class MetricSnapshot(Base):
+    """One measured value per day (M12): trends are recorded, not recomputed from changing data."""
+
+    __tablename__ = "metric_snapshots"
+    __table_args__ = (UniqueConstraint("taken_on", "metric", "source"),)
+    id: Mapped[uuid.UUID] = _pk()
+    taken_on: Mapped[str] = mapped_column(String(10), index=True)  # YYYY-MM-DD (UTC)
+    metric: Mapped[str] = mapped_column(String(60))
+    source: Mapped[str] = mapped_column(String(100), default="")  # "" = all sources
+    value: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = _ts()
