@@ -11,6 +11,7 @@ possible, and the operational decision taken. A lawyer should confirm before com
 | Common Crawl | Active (discovery) | Terms allow use incl. commercial, with a strong recommendation to get legal advice; third-party content rights stay with site owners |
 | crt.sh / Certificate Transparency | Active as **evidence only** | No published terms found; CT logs are public by design; operator rate limits apply |
 | Own crawler (stores' public pages) | Active | robots.txt honoured, opt-out list, no bot-wall bypass; content rights belong to site owners |
+| ICANN CZDS zone files (`czds_zonefile`) | **Built, disabled** — pending CZDS approval + legal review | Registry terms allow lawful use; forbid mass unsolicited advertising and high-volume automated queries to registry/registrar systems. Zone data never stored or redistributed; only DNS-matched candidate names kept |
 | Manual submissions | Active | — |
 
 ## urlscan.io — terms of service (https://urlscan.io/terms/, read 2026-11-04)
@@ -65,3 +66,17 @@ opt-outs.
 2. Paid plans or licences need explicit owner approval.
 3. Provenance (`discovered_urls.source_id` + `source_ref`) is kept so any source's contribution
    can be purged if its rights change.
+
+## ICANN CZDS zone files (reviewed 2026-11-05)
+
+- Access per TLD is granted by each registry through ICANN CZDS; it expires and must be renewed.
+- Registry zone-file policies (e.g. the ICANN-published zone file access agreement and registry CZDS
+  policies) allow use "only for lawful purposes" but never to support mass unsolicited commercial
+  advertising/solicitation, nor to enable high-volume automated processes that query registry or
+  registrar systems. Some registries add their own terms — read each one when approved.
+- **Our use:** zone data is diffed on the VPS and deleted; only names that resolve to a commerce
+  platform's IP range enter the database as candidates (with provenance), then are verified from the
+  public website. No zone data is exported or shown to customers. DNS lookups go to our resolver,
+  not to registry/registrar systems.
+- **Open risk:** CommerceRadar customers may use store lists for outreach. Customer terms should
+  forbid spam; a lawyer should confirm this use before enabling.

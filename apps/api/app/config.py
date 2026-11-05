@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     product_pages_per_run: int = 20  # per store per extraction job
     product_page_delay: float = 1.0  # seconds between product pages (robots Crawl-delay wins if larger)
     urlscan_api_key: str = ""
+    czds_username: str = ""  # ICANN account for zone-file downloads (source czds_zonefile)
+    czds_password: str = ""
 
     # ---- accounts / billing (M8) ----
     session_days: int = 30
