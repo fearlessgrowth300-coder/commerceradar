@@ -5,7 +5,9 @@ from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 
-from app.models import DiscoveredUrl, DiscoverySource, Domain, MetricSnapshot, Store, StoreDomain
+from datetime import timedelta
+
+from app.models import CrawlJob, DiscoveredUrl, DiscoverySource, Domain, MetricSnapshot, Store, StoreDomain
 from app.services import metrics
 
 
@@ -72,3 +74,24 @@ def test_metrics_endpoint_includes_contribution(client):
     snap = client.get("/api/v1/admin/metrics").json()
     assert isinstance(snap["unique_contribution"], list)
     assert client.get("/api/v1/admin/metrics/history", params={"metric": "live_stores"}).status_code == 200
+
+
+
+def test_processing_cost_is_split_not_double_counted(db):
+    a, b = src(db, f"CA-{t()}"), src(db, f"CB-{t()}")
+    shared_dom = domain(db, [a, b])
+    only_a_dom = domain(db, [a])
+    manual_dom = domain(db, [])
+    future = datetime(2032, 6, 1, tzinfo=UTC)  # isolated window
+    for d, kind, secs in ((shared_dom, "verify", 10), (shared_dom, "products", 30), (only_a_dom, "verify", 4), (manual_dom, "verify", 6)):
+        db.add(CrawlJob(domain_id=d.id, target_domain=d.normalized_domain, job_type=kind, status="succeeded",
+                        started_at=future - timedelta(seconds=secs), completed_at=future))  # fmt: skip
+    db.commit()
+    cost = metrics.processing_cost(db, future + timedelta(seconds=1), days=1)
+    assert cost["actual_seconds"] == {"verify": 20, "products": 30}
+    assert cost["unattributed_seconds"] == {"verify": 6, "products": 0}
+    pa, pb = cost["per_source"][a.name], cost["per_source"][b.name]
+    assert (pa["verify"], pa["products"]) == (9.0, 15.0)  # 10/2 + 4, 30/2
+    assert (pb["verify"], pb["products"]) == (5.0, 15.0)
+    shares = sum(v["verify"] + v["products"] for v in cost["per_source"].values()) + 6
+    assert shares == 50  # shares + unattributed == actual total: nothing counted twice
