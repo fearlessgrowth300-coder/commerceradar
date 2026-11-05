@@ -37,7 +37,7 @@ def store_found_by(db, sources: list[DiscoverySource], host=None) -> Store:
 
 
 def test_urlscan_is_restricted_by_migration(db):
-    us = db.scalar(select(DiscoverySource).where(DiscoverySource.source_type == "urlscan"))
+    us = db.scalar(select(DiscoverySource).where(DiscoverySource.name == "urlscan"))  # the seeded source (tests create other urlscan-type rows)
     assert us.restricted and not us.enabled and "written permission" in us.restriction_reason
 
 
