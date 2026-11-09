@@ -2,7 +2,7 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { API_URL, apiError, SESSION_COOKIE } from "@/lib/api";
+import { API_URL, apiError, PROXY_HEADERS, SESSION_COOKIE } from "@/lib/api";
 
 export async function authenticate(kind: "login" | "register", formData: FormData) {
   if (kind !== "login" && kind !== "register") throw new Error("invalid action");
@@ -13,7 +13,7 @@ export async function authenticate(kind: "login" | "register", formData: FormDat
   try {
     const res = await fetch(`${API_URL}/api/v1/auth/${kind}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...PROXY_HEADERS },
       body: JSON.stringify(body),
       cache: "no-store",
     });

@@ -269,3 +269,57 @@ def history(db: Session, metric: str, days: int = 90) -> list[dict]:
 
     q = select(MetricSnapshot).where(MetricSnapshot.metric == metric).order_by(MetricSnapshot.taken_on.desc(), MetricSnapshot.source)
     return [{"day": m.taken_on, "source": m.source, "value": m.value} for m in db.scalars(q.limit(days * 20))]
+
+
+def _scan_file(name: str) -> dict | None:
+    """Progress of a one-off zone-file scan (JSON written by the scan job into the zone volume)."""
+    import json
+    import os
+
+    path = os.path.join(os.environ.get("ZONE_DIR", "/zones"), name)
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def pipeline(db: Session, now: datetime | None = None) -> dict:
+    """Live view for the admin Pipeline page: what is being found, checked and confirmed right now."""
+    import os
+
+    now = now or datetime.now(UTC)
+    live = Store.merged_into_store_id.is_(None)
+    first = [t for (t,) in db.execute(select(Store.first_verified_at).where(live, Store.first_verified_at >= now - timedelta(hours=24)))]
+    hourly = [0] * 24  # index 0 = the hour ending now
+    for t in first:
+        t = t if t.tzinfo else t.replace(tzinfo=UTC)
+        h = int((now - t).total_seconds() // 3600)
+        if 0 <= h < 24:
+            hourly[h] += 1
+    recent = db.execute(
+        select(Store.id, Store.store_name, Store.canonical_url, Store.primary_platform, Store.activity_status, Store.first_verified_at)
+        .where(live, Store.first_verified_at.is_not(None)).order_by(Store.first_verified_at.desc()).limit(25)
+    ).all()
+    try:
+        load = [round(x, 2) for x in os.getloadavg()]
+    except OSError:
+        load = None
+    return {
+        "measured_at": now,
+        "domains_by_status": dict(db.execute(select(Domain.verification_status, func.count()).group_by(Domain.verification_status)).all()),
+        "stores_by_activity": dict(db.execute(select(Store.activity_status, func.count()).where(live).group_by(Store.activity_status)).all()),
+        "stores_total": db.scalar(select(func.count()).select_from(Store).where(live)) or 0,
+        "new_stores_1h": hourly[0],
+        "new_stores_24h": len(first),
+        "new_stores_hourly": list(reversed(hourly)),  # oldest hour first
+        "checks": job_stats(db, now, hours=1).get("verify", {}),
+        "queues": queues(),
+        "scans": {"full": _scan_file("fullscan/progress.json"), "sample": _scan_file("sample-result.json")},
+        "server": {"load": load, "cpus": os.cpu_count()},
+        "recent_stores": [
+            {"id": str(r.id), "name": r.store_name, "url": r.canonical_url, "platform": r.primary_platform,
+             "activity": r.activity_status, "first_verified_at": r.first_verified_at}
+            for r in recent
+        ],
+    }  # fmt: skip

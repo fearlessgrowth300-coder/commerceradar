@@ -34,7 +34,7 @@ services:
     build: ./apps/api
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     environment: *api-env
-    volumes: [./apps/api:/app]
+    volumes: [./apps/api:/app, zonedata:/zones:ro] # read-only: scan progress for /admin/pipeline
     ports: ["127.0.0.1:8000:8000"]
     depends_on:
       postgres: { condition: service_healthy }

@@ -4,11 +4,13 @@ import { redirect } from "next/navigation";
 
 export const API_URL = process.env.API_URL ?? "http://localhost:8000";
 export const SESSION_COOKIE = "cr_session";
+// When the web app runs outside the VPS (Vercel), the API sits behind a proxy that only accepts this key.
+export const PROXY_HEADERS: Record<string, string> = process.env.API_PROXY_KEY ? { "x-cr-key": process.env.API_PROXY_KEY } : {};
 
 /** fetch() against the API with the user's session forwarded as a Bearer token. */
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  const headers: Record<string, string> = { ...((init.headers as Record<string, string>) ?? {}) };
+  const headers: Record<string, string> = { ...((init.headers as Record<string, string>) ?? {}), ...PROXY_HEADERS };
   if (token) headers.authorization = `Bearer ${token}`;
   return fetch(`${API_URL}${path}`, { ...init, headers, cache: "no-store" });
 }

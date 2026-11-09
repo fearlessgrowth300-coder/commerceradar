@@ -71,6 +71,16 @@ def test_metrics_endpoint_admin_only(client):
     assert TestClient(app, headers={"Authorization": f"Bearer {tok}"}).get("/api/v1/admin/metrics").status_code == 403
 
 
+def test_pipeline_endpoint_reads_scan_progress(client, tmp_path, monkeypatch):
+    (tmp_path / "fullscan").mkdir()
+    (tmp_path / "fullscan" / "progress.json").write_text('{"offset": 10, "total": 100, "matched": 1}')
+    monkeypatch.setenv("ZONE_DIR", str(tmp_path))
+    p = client.get("/api/v1/admin/pipeline").json()
+    assert p["scans"]["full"]["offset"] == 10 and p["scans"]["sample"] is None
+    assert len(p["new_stores_hourly"]) == 24 and sum(p["new_stores_hourly"]) == p["new_stores_24h"]
+    assert {"domains_by_status", "stores_by_activity", "recent_stores", "queues", "server"} <= set(p)
+
+
 def test_backlog_budget_adapts_to_queue_depth(db, monkeypatch):
     for name in ("monitor_rechecks_per_tick", "monitor_candidate_rechecks_per_tick"):
         monkeypatch.setattr(settings, name, 0)

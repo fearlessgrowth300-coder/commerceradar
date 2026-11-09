@@ -274,6 +274,12 @@ def admin_metrics(db: Session = Depends(get_db)):
     return metrics.snapshot(db)
 
 
+@router.get("/admin/pipeline", dependencies=[Depends(admin)])
+def admin_pipeline(db: Session = Depends(get_db)):
+    """Live pipeline: scan progress, checks per hour, new stores, queues, server load."""
+    return metrics.pipeline(db)
+
+
 
 # ---------- blind labelling (M11) ----------
 

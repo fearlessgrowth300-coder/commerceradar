@@ -21,6 +21,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <Link href="/searches" className="text-slate-600 hover:text-slate-900">Saved &amp; alerts</Link>
                 <Link href="/discovery" className="text-slate-600 hover:text-slate-900">Discovery</Link>
                 <Link href="/sources" className="text-slate-600 hover:text-slate-900">Sources</Link>
+                {me.is_admin && <Link href="/admin/pipeline" className="text-slate-600 hover:text-slate-900">Pipeline</Link>}
                 {me.is_admin && <Link href="/admin" className="text-slate-600 hover:text-slate-900">Admin</Link>}
                 <Link href="/account" className="ml-auto text-slate-600 hover:text-slate-900">{me.email}</Link>
               </>
