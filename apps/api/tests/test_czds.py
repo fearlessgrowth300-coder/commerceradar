@@ -8,7 +8,7 @@ import pytest
 from app.config import settings
 from app.sources import Ctx, SourceError, czds
 
-API = "https://czds-api.icann.org/czds/downloads"
+API = "https://czds-download-api.icann.org/czds/downloads"
 
 
 def zone(*names: str) -> bytes:

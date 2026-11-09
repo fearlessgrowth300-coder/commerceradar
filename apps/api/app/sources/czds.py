@@ -27,6 +27,7 @@ from app.sources import Batch, Ctx, Found, SourceError
 
 AUTH_URL = "https://account-api.icann.org/api/authenticate"
 API = "https://czds-api.icann.org"
+DOWNLOADS = ("https://czds-api.icann.org/czds/downloads/", "https://czds-download-api.icann.org/czds/downloads/")
 SHOPIFY = ["23.227.38.0/24"]
 
 
@@ -52,7 +53,7 @@ def approved_links(client: httpx.Client, token: str) -> dict[str, str]:
         raise SourceError(f"CZDS links HTTP {r.status_code}")
     out = {}
     for url in r.json():
-        if url.startswith(f"{API}/czds/downloads/") and url.endswith(".zone"):  # never follow other hosts
+        if url.startswith(DOWNLOADS) and url.endswith(".zone"):  # never follow other hosts
             out[url.rsplit("/", 1)[-1].removesuffix(".zone")] = url
     return out
 
