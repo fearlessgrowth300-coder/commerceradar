@@ -16,7 +16,7 @@ from app.models import (Alert, AuthSession, CrawlJob, Domain, Membership, Organi
                         UsageCounter)  # fmt: skip
 from app.services import billing, stores
 
-FILTER_KEYS = ("q", "platform", "activity", "ecommerce_status", "signal", "verified_from", "verified_to", "sort")
+FILTER_KEYS = ("q", "platform", "activity", "country", "ecommerce_status", "signal", "verified_from", "verified_to", "sort")
 EXPORT_COLUMNS = ("domain", "store_name", "primary_platform", "platform_confidence", "ecommerce_status", "activity_status",
                   "first_verified_at", "last_verified_at", "products_observed")  # fmt: skip
 

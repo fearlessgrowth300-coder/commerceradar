@@ -330,6 +330,7 @@ class StoreRow(BaseModel):
     first_verified_at: datetime | None
     last_verified_at: datetime | None
     product_count: int
+    business_country: str | None = None  # self-reported by the store (Shopify settings)
     restricted: bool = False
 
 
@@ -381,6 +382,11 @@ class StoreFull(BaseModel):
     next_check_at: datetime | None
     last_changed_at: datetime | None
     consecutive_failures: int
+    business_country: str | None = None
+    business_region: str | None = None
+    business_city: str | None = None
+    location_source: str | None = None
+    location_checked_at: datetime | None = None
 
 
 class StoreDetailOut(BaseModel):
@@ -438,7 +444,7 @@ def _store_rows(rows) -> list[dict]:
         {"id": st.id, "domain": dom, "store_name": st.store_name, "primary_platform": st.primary_platform,
          "platform_confidence": st.platform_confidence, "ecommerce_status": st.ecommerce_status,
          "activity_status": st.activity_status, "first_verified_at": st.first_verified_at,
-         "last_verified_at": st.last_verified_at, "product_count": n}
+         "last_verified_at": st.last_verified_at, "product_count": n, "business_country": st.business_country}
         for st, dom, n in rows
     ]  # fmt: skip
 
@@ -449,6 +455,7 @@ def list_stores(
     q: str | None = Query(None, max_length=253),
     platform: str | None = Query(None),
     activity: str | None = Query(None),
+    country: str | None = Query(None, pattern="^[A-Za-z]{2}$"),
     ecommerce_status: str | None = Query(None, pattern="^(confirmed_ecommerce|probable_ecommerce)$"),
     signal: str | None = Query(None),
     verified_from: datetime | None = None,
@@ -461,7 +468,7 @@ def list_stores(
     _store_filters(platform, activity, signal)
     admin_view = ctx.user.is_admin
     rows, total = stores.list_stores(
-        db, q=q, platform=platform, activity=activity, ecommerce_status=ecommerce_status, signal=signal,
+        db, q=q, platform=platform, activity=activity, country=country, ecommerce_status=ecommerce_status, signal=signal,
         verified_from=verified_from, verified_to=verified_to, sort=sort, page=page, page_size=page_size,
         include_restricted=admin_view,
     )  # fmt: skip

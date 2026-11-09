@@ -15,6 +15,7 @@ type Row = {
   first_verified_at: string | null;
   last_verified_at: string | null;
   product_count: number;
+  business_country: string | null;
 };
 type Page = { items: Row[]; total: number; page: number; page_size: number };
 type SignalType = { type: string; category: string; active: number };
@@ -27,7 +28,7 @@ const SORTS: [string, string][] = [
   ["name", "Name"],
   ["products", "Most products observed"],
 ];
-const FILTERS = ["q", "platform", "activity", "signal", "verified_from", "verified_to", "sort"] as const;
+const FILTERS = ["q", "platform", "activity", "country", "signal", "verified_from", "verified_to", "sort"] as const;
 
 async function saveSearch(formData: FormData) {
   "use server";
@@ -79,6 +80,16 @@ export default async function Stores({ searchParams }: { searchParams: Promise<R
             <option key={a} value={a}>{a.replace("_", " ")}</option>
           ))}
         </select>
+        <input
+          name="country"
+          defaultValue={sp.country}
+          placeholder="Country code, e.g. US"
+          aria-label="Business country (2-letter code)"
+          pattern="[A-Za-z]{2}"
+          maxLength={2}
+          title="Two-letter country code, e.g. US, GB, CA"
+          className="rounded-md border border-slate-300 px-2 py-1.5 uppercase"
+        />
         <select name="signal" defaultValue={sp.signal ?? ""} aria-label="Signal" className="rounded-md border border-slate-300 px-2 py-1.5">
           <option value="">Any signal</option>
           {(types ?? []).map((t) => (
@@ -128,6 +139,7 @@ export default async function Stores({ searchParams }: { searchParams: Promise<R
                   <th className="px-3 py-2 font-medium">Store</th>
                   <th className="px-3 py-2 font-medium">Platform</th>
                   <th className="px-3 py-2 font-medium">Activity</th>
+                  <th className="px-3 py-2 font-medium" title="Business address set by the store (Shopify settings)">Country</th>
                   <th className="px-3 py-2 font-medium">Products observed</th>
                   <th className="px-3 py-2 font-medium">First verified</th>
                 </tr>
@@ -141,6 +153,7 @@ export default async function Stores({ searchParams }: { searchParams: Promise<R
                     </td>
                     <td className="px-3 py-2">{PLATFORM_LABEL[s.primary_platform] ?? s.primary_platform}</td>
                     <td className="px-3 py-2">{s.activity_status.replace("_", " ")}</td>
+                    <td className="px-3 py-2">{s.business_country ?? "—"}</td>
                     <td className="px-3 py-2 tabular-nums">{s.product_count}</td>
                     <td className="px-3 py-2 text-slate-600">{fmtDate(s.first_verified_at)}</td>
                   </tr>

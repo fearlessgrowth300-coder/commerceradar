@@ -26,6 +26,10 @@ type Detail = {
     activity_evidence: Record<string, unknown> | null;
     primary_platform: string;
     platform_confidence: number | null;
+    business_country?: string | null;
+    business_region?: string | null;
+    business_city?: string | null;
+    location_checked_at?: string | null;
     first_verified_at: string | null;
     last_verified_at: string | null;
     last_successful_check_at: string | null;
@@ -70,6 +74,16 @@ export default async function StorePage({ params }: { params: Promise<{ id: stri
           <div><dt className="text-slate-500">Platform</dt><dd>{(PLATFORM_LABEL[s.primary_platform] ?? s.primary_platform) + pct(s.platform_confidence)}</dd></div>
           <div><dt className="text-slate-500">Activity</dt><dd>{s.activity_status.replace("_", " ") + pct(s.activity_confidence)}</dd></div>
           <div><dt className="text-slate-500">Classification</dt><dd>{s.ecommerce_status.replace("_", " ")}</dd></div>
+          <div>
+            <dt className="text-slate-500" title="Self-reported: the business address the store set in its Shopify settings. Not proof of where the owner lives.">
+              Business country (set by store)
+            </dt>
+            <dd>
+              {s.business_country
+                ? [s.business_city, s.business_region, s.business_country].filter(Boolean).join(", ")
+                : s.location_checked_at ? "not published" : "not checked yet"}
+            </dd>
+          </div>
           <div><dt className="text-slate-500">First discovered</dt><dd>{fmtDate(d.domain_first_seen_at)}</dd></div>
           <div><dt className="text-slate-500">First verified</dt><dd>{fmtDate(s.first_verified_at)}</dd></div>
           <div><dt className="text-slate-500">Last verified</dt><dd>{fmtDate(s.last_verified_at)}</dd></div>

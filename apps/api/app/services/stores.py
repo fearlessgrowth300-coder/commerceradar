@@ -24,6 +24,7 @@ def list_stores(
     q: str | None = None,
     platform: str | None = None,
     activity: str | None = None,
+    country: str | None = None,
     ecommerce_status: str | None = None,
     signal: str | None = None,
     verified_from: datetime | None = None,
@@ -53,6 +54,8 @@ def list_stores(
         stmt = stmt.where(Store.primary_platform == platform)
     if activity:
         stmt = stmt.where(Store.activity_status == activity)
+    if country:
+        stmt = stmt.where(Store.business_country == country.upper())
     if ecommerce_status:
         stmt = stmt.where(Store.ecommerce_status == ecommerce_status)
     if verified_from:

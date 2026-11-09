@@ -164,6 +164,13 @@ class Store(Base):
     platform_confidence: Mapped[float | None] = mapped_column(Float)
     first_verified_at: Mapped[datetime | None] = _opt_ts(index=True)
     last_verified_at: Mapped[datetime | None] = _opt_ts(index=True)
+    # Business address the merchant set in their store settings (Shopify /meta.json). Self-reported:
+    # says where the business is registered/listed, not who owns it.
+    business_country: Mapped[str | None] = mapped_column(String(2), index=True)  # ISO 3166-1 alpha-2
+    business_region: Mapped[str | None] = mapped_column(String(100))
+    business_city: Mapped[str | None] = mapped_column(String(100))
+    location_source: Mapped[str | None] = mapped_column(String(30))
+    location_checked_at: Mapped[datetime | None] = _opt_ts()
     last_observed_at: Mapped[datetime | None] = _opt_ts()
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = _updated()

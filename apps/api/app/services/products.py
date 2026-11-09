@@ -315,6 +315,39 @@ def _json(v: Any) -> Any:
     return str(v) if isinstance(v, Decimal) else v
 
 
+def parse_shop_meta(text: str) -> dict | None:
+    """Business location from a Shopify /meta.json body: {country, region, city} or None.
+    Only a valid 2-letter country code counts; region/city are kept as the merchant typed them."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    country = str(data.get("country") or "").strip().upper()
+    if not re.fullmatch(r"[A-Z]{2}", country):
+        return None
+    clean = lambda v: (str(v).strip()[:100] or None) if v else None  # noqa: E731
+    return {"country": country, "region": clean(data.get("province")), "city": clean(data.get("city"))}
+
+
+def update_location(store: Store, fetcher: SafeFetcher, base: str, robots, ua: str) -> bool:
+    """Shopify stores publish their settings' business address at /meta.json. One request, robots-checked."""
+    url = urljoin(base, "/meta.json")
+    if not robots.can_fetch(ua, url):
+        return False
+    try:
+        r = fetcher.fetch(url)
+    except (FetchError, BlockedDestination, DnsFailure):
+        return False
+    loc = parse_shop_meta(r.text) if r.status == 200 else None
+    store.location_checked_at = datetime.now(UTC)
+    if loc:
+        store.business_country, store.business_region, store.business_city = loc["country"], loc["region"], loc["city"]
+        store.location_source = "shopify_meta"
+    return loc is not None
+
+
 def extract_store(db: Session, store: Store, fetcher: SafeFetcher, max_pages: int, delay: float) -> ExtractStats:
     """One bounded pass over a store. Network errors on single pages are counted, not raised;
     an unreachable store raises FetchError so the task can retry later."""
@@ -326,6 +359,8 @@ def extract_store(db: Session, store: Store, fetcher: SafeFetcher, max_pages: in
     robots = _robots(fetcher, base)  # FetchError propagates → retry
     ua = settings.bot_user_agent
     delay = max(delay, min(float(robots.crawl_delay(ua) or 0), 10.0))
+    if store.primary_platform == "shopify":
+        update_location(store, fetcher, base, robots, ua)
 
     urls = _sitemaps(fetcher, base, robots, host, stats)
     if len(urls) < max_pages and robots.can_fetch(ua, base):
