@@ -57,12 +57,14 @@ services:
       retries: 3
 
   verifier:
-    # Verification queue only, on threads: a check is ~0.1 s CPU and mostly waiting on the network,
-    # so threads run many at once cheaply (measured 2026-11-09: 8 threads ~35k checks/h, 0.09 CPU s
-    # per check). Throughput is still capped by MONITOR_BACKLOG_PER_TICK / MONITOR_MAX_IN_FLIGHT.
+    # Verification + product queues on threads: both are mostly waiting on the network (a check is
+    # ~0.1 s CPU; product runs sleep PRODUCT_PAGE_DELAY between pages), so threads run many at once
+    # cheaply (measured 2026-11-09: 8 threads ~35k checks/h). Verification rate is still capped by
+    # MONITOR_BACKLOG_PER_TICK / MONITOR_MAX_IN_FLIGHT. Keep threads <= 15: a product run holds a DB
+    # connection while it sleeps, and the SQLAlchemy pool is 5 + 10 overflow per process.
     build: ./apps/api
     init: true
-    command: celery -A app.worker worker -Q verification --pool threads --concurrency=${VERIFIER_THREADS:-8} --loglevel=info --hostname=verifier@%h
+    command: celery -A app.worker worker -Q verification,products --pool threads --concurrency=${VERIFIER_THREADS:-12} --loglevel=info --hostname=verifier@%h
     environment: *api-env
     volumes: [./apps/api:/app]
     stop_grace_period: 60s
