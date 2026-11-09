@@ -6,6 +6,7 @@ x-api-env: &api-env
 
 services:
   postgres:
+    restart: unless-stopped # survive crashes and VPS reboots (set 2026-11-10)
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -21,6 +22,7 @@ services:
       retries: 10
 
   redis:
+    restart: unless-stopped # survive crashes and VPS reboots (set 2026-11-10)
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
     volumes: [redisdata:/data]
@@ -31,6 +33,7 @@ services:
       retries: 10
 
   api:
+    restart: unless-stopped # survive crashes and VPS reboots (set 2026-11-10)
     build: ./apps/api
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     environment: *api-env
@@ -41,6 +44,7 @@ services:
       redis: { condition: service_healthy }
 
   worker:
+    restart: unless-stopped # survive crashes and VPS reboots (set 2026-11-10)
     build: ./apps/api
     init: true # reaps finished health checks (1,944 zombies accumulated without it, 2026-11-09)
     command: celery -A app.worker worker -Q celery,verification,discovery,products --loglevel=info --concurrency=${WORKER_CONCURRENCY:-2}
@@ -57,6 +61,7 @@ services:
       retries: 3
 
   verifier:
+    restart: unless-stopped # survive crashes and VPS reboots (set 2026-11-10)
     # Verification + product queues on threads: both are mostly waiting on the network (a check is
     # ~0.1 s CPU; product runs sleep PRODUCT_PAGE_DELAY between pages), so threads run many at once
     # cheaply (measured 2026-11-09: 8 threads ~35k checks/h). Verification rate is still capped by
@@ -78,6 +83,7 @@ services:
       retries: 3
 
   beat:
+    restart: unless-stopped # survive crashes and VPS reboots (set 2026-11-10)
     # Scheduler. Exactly one instance: it only enqueues the bounded monitoring tick.
     build: ./apps/api
     command: celery -A app.worker beat --loglevel=info --schedule /tmp/celerybeat-schedule
@@ -87,6 +93,7 @@ services:
       redis: { condition: service_healthy }
 
   web:
+    restart: unless-stopped # survive crashes and VPS reboots (set 2026-11-10)
     build: ./apps/web
     command: npm run dev
     environment:
