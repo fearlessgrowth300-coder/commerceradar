@@ -50,9 +50,10 @@ services:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
     healthcheck:
-      test: ["CMD-SHELL", "celery -A app.worker inspect ping -d celery@$$HOSTNAME --timeout 5"]
-      interval: 30s
-      timeout: 10s
+      # timeout -s KILL: Docker does not kill a timed-out check; survivors piled up (1939 on 2026-11-09)
+      test: ["CMD-SHELL", "timeout -s KILL 25 celery -A app.worker inspect ping -d celery@$$HOSTNAME --timeout 5"]
+      interval: 60s
+      timeout: 30s
       retries: 3
 
   beat:
