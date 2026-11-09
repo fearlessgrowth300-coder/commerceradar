@@ -44,7 +44,7 @@ Next increases, in order: (1) move product extraction for new stores to off-peak
 queue (frees ~55 % of worker time); (2) a second worker host via `docker-compose.worker.yml`
 (paid — needs approval) or a ≥4 vCPU host, then per-tick 120 / 4 workers; measure each step.
 
-## Rollout of the cost-attribution code (branch `m12b-cost-attribution`, 213 tests pass isolated)
+## Rollout of the cost-attribution code (branch `m12b-cost-attribution`, 212 tests pass isolated)
 No migration. Needs release approval. Steps: encrypted backup + checksum → `make deploy` →
 health → `/admin/metrics` shows `processing_cost_7d` → tag `release/<date>-m12b`. Rollback =
 redeploy the previous tag (no schema change). Runtime tuning stays in `apps/api/.env`
