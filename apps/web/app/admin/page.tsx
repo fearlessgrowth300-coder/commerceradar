@@ -25,8 +25,10 @@ type Metrics = {
   queues: Record<string, number>;
   unique_contribution?: {
     source: string; restricted: boolean; candidates: number; processed: number; stores: number;
-    unique_stores: number; shared_stores: number; store_rate: number | null; new_stores_7d: number; seconds_per_new_store: number | null;
+    unique_stores: number; shared_stores: number; store_rate: number | null; new_stores_7d: number; new_unique_stores_7d: number;
+    attributed_seconds_7d: number; seconds_per_new_unique_store: number | null;
   }[];
+  processing_cost_7d?: { actual_seconds: { verify: number; products: number }; unattributed_seconds: { verify: number; products: number } };
 };
 
 const mb = (b?: number) => (b == null ? "—" : `${(b / 1048576).toFixed(1)} MB`);
@@ -104,16 +106,23 @@ export default async function Admin({ searchParams }: { searchParams: Promise<{ 
                 ))}
               </tbody>
             </table>
+            {m.processing_cost_7d && (
+              <p className="mt-2">
+                Actual worker time (7 d, each job once): verification {m.processing_cost_7d.actual_seconds.verify.toLocaleString()} s ·
+                product extraction {m.processing_cost_7d.actual_seconds.products.toLocaleString()} s · not attributable to a source{" "}
+                {(m.processing_cost_7d.unattributed_seconds.verify + m.processing_cost_7d.unattributed_seconds.products).toLocaleString()} s
+              </p>
+            )}
             {m.unique_contribution && (
               <table className="mt-2 w-full text-left">
                 <thead className="text-slate-500">
-                  <tr><th>Source</th><th>Live stores</th><th>Only this source</th><th>Shared</th><th>New (7 d)</th><th>Worker s / new store</th></tr>
+                  <tr><th>Source</th><th>Live stores</th><th>Only this source</th><th>Shared</th><th>New unique (7 d)</th><th>Worker s (7 d, split)</th><th>s / new unique store</th></tr>
                 </thead>
                 <tbody>
                   {m.unique_contribution.map((u) => (
                     <tr key={u.source}>
                       <td>{u.source}{u.restricted && " (restricted)"}</td><td>{u.stores}</td><td>{u.unique_stores}</td>
-                      <td>{u.shared_stores}</td><td>{u.new_stores_7d}</td><td>{u.seconds_per_new_store ?? "—"}</td>
+                      <td>{u.shared_stores}</td><td>{u.new_unique_stores_7d}</td><td>{u.attributed_seconds_7d}</td><td>{u.seconds_per_new_unique_store ?? "—"}</td>
                     </tr>
                   ))}
                 </tbody>

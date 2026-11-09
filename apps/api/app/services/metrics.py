@@ -29,7 +29,7 @@ def job_stats(db: Session, now: datetime, hours: int = 24) -> dict:
     since = now - timedelta(hours=hours)
     rows = db.execute(
         select(CrawlJob.job_type, CrawlJob.status, CrawlJob.started_at, CrawlJob.completed_at, CrawlJob.attempts)
-        .where(CrawlJob.completed_at >= since)
+        .where(CrawlJob.completed_at >= since, CrawlJob.completed_at < now)
     ).all()
     out: dict[str, dict] = {}
     # Rate over the time actually observed: a system that started 3 h ago must not be averaged over 24 h.
@@ -127,6 +127,7 @@ def snapshot(db: Session, now: datetime | None = None) -> dict:
         },
         "source_yield": source_yield(db),
         "unique_contribution": unique_contribution(db, now),
+        "processing_cost_7d": {k: v for k, v in processing_cost(db, now).items() if k != "per_source"},
         "storage": storage(db),
         "queues": queues(),
     }
@@ -166,6 +167,7 @@ def unique_contribution(db: Session, now: datetime | None = None, days: int = 7)
     new_ids = set(db.scalars(select(Store.id).where(Store.first_verified_at >= since, Store.merged_into_store_id.is_(None))))
 
     sources = db.execute(select(DiscoverySource.name, DiscoverySource.id, DiscoverySource.restricted, DiscoverySource.enabled)).all()
+    attributed = processing_cost(db, now, days)["per_source"]
     out = []
     for name, sid, restricted, enabled in sorted(sources):
         candidates = db.scalar(select(func.count(func.distinct(DiscoveredUrl.domain_id))).where(DiscoveredUrl.source_id == sid)) or 0
@@ -175,22 +177,70 @@ def unique_contribution(db: Session, now: datetime | None = None, days: int = 7)
         ) or 0  # fmt: skip
         mine = [st for st, srcs in by_store.items() if name in srcs]
         unique = [st for st in mine if by_store[st] == {name}]
-        jobs = db.execute(
-            select(CrawlJob.started_at, CrawlJob.completed_at)
-            .where(CrawlJob.job_type == "verify", CrawlJob.status == "succeeded", CrawlJob.completed_at >= since,
-                   CrawlJob.domain_id.in_(select(DiscoveredUrl.domain_id).where(DiscoveredUrl.source_id == sid)))
-        ).all()  # fmt: skip
-        secs = sum((c - s).total_seconds() for s, c in jobs if s and c)
         new_here = len([st for st in mine if st in new_ids])
+        new_unique = len([st for st in unique if st in new_ids])
+        att = attributed.get(name, {"verify": 0.0, "products": 0.0, "verify_jobs": 0.0})
+        total_att = att["verify"] + att["products"]
         out.append({
             "source": name, "restricted": bool(restricted), "enabled": bool(enabled),
             "candidates": candidates, "processed": processed, "stores": len(mine),
             "unique_stores": len(unique), "shared_stores": len(mine) - len(unique),
             "store_rate": round(len(mine) / processed, 3) if processed else None,
-            "verify_jobs_7d": len(jobs), "verify_seconds_7d": round(secs),
-            "new_stores_7d": new_here, "seconds_per_new_store": round(secs / new_here) if new_here else None,
+            "new_stores_7d": new_here, "new_unique_stores_7d": new_unique,
+            # actual worker time, split across sources that share a domain (sums to the real total)
+            "attributed_verify_seconds_7d": round(att["verify"]),
+            "attributed_product_seconds_7d": round(att["products"]),
+            "attributed_seconds_7d": round(total_att),
+            "attributed_verify_jobs_7d": round(att["verify_jobs"], 1),
+            # incremental cost of what ONLY this source contributes
+            "seconds_per_new_unique_store": round(total_att / new_unique) if new_unique else None,
         })  # fmt: skip
     return out
+
+
+def processing_cost(db: Session, now: datetime | None = None, days: int = 7) -> dict:
+    """Actual worker time in the window, each job counted ONCE, then split equally across the
+    sources that found the job's domain (no double counting; shares sum to the total).
+    Jobs whose domain has no source record (manual submissions, re-checks of manually added
+    stores) are reported as `unattributed`."""
+    now = now or datetime.now(UTC)
+    since = now - timedelta(days=days)
+    jobs = db.execute(
+        select(CrawlJob.job_type, CrawlJob.domain_id, CrawlJob.started_at, CrawlJob.completed_at)
+        .where(CrawlJob.status == "succeeded", CrawlJob.completed_at >= since, CrawlJob.completed_at < now, CrawlJob.job_type.in_(("verify", "products")))
+    ).all()  # fmt: skip
+    dom_ids = {d for _, d, _, _ in jobs if d}
+    found_by: dict = {}
+    for chunk_start in range(0, len(dom_ids), 1000):
+        chunk = list(dom_ids)[chunk_start : chunk_start + 1000]
+        for dom, src in db.execute(
+            select(DiscoveredUrl.domain_id, DiscoverySource.name)
+            .join(DiscoverySource, DiscoverySource.id == DiscoveredUrl.source_id)
+            .where(DiscoveredUrl.domain_id.in_(chunk)).distinct()
+        ).all():  # fmt: skip
+            found_by.setdefault(dom, set()).add(src)
+    per: dict = {}
+    total = {"verify": 0.0, "products": 0.0}
+    unattributed = {"verify": 0.0, "products": 0.0}
+    counts = {"verify": 0, "products": 0}
+    for jtype, dom, start, end in jobs:
+        if not (start and end):
+            continue
+        secs = max((end - start).total_seconds(), 0.0)
+        total[jtype] += secs
+        counts[jtype] += 1
+        srcs = found_by.get(dom)
+        if not srcs:
+            unattributed[jtype] += secs
+            continue
+        share = secs / len(srcs)
+        for s in srcs:
+            row = per.setdefault(s, {"verify": 0.0, "products": 0.0, "verify_jobs": 0.0})
+            row[jtype] += share
+            if jtype == "verify":
+                row["verify_jobs"] += 1 / len(srcs)
+    return {"window_days": days, "jobs": counts, "actual_seconds": {k: round(v) for k, v in total.items()},
+            "unattributed_seconds": {k: round(v) for k, v in unattributed.items()}, "per_source": per}  # fmt: skip
 
 
 def take_daily_snapshot(db: Session, now: datetime | None = None) -> int:

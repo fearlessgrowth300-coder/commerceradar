@@ -12,6 +12,7 @@
 services:
   worker:
     build: ./apps/api
+    init: true # reaps finished health checks (1,944 zombies accumulated without it, 2026-11-09)
     command: >
       celery -A app.worker worker -Q ${WORKER_QUEUES:-celery,verification,discovery,products}
       --loglevel=info --concurrency=${WORKER_CONCURRENCY:-2} --hostname=worker@%h
@@ -23,6 +24,6 @@ services:
     stop_grace_period: 60s
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.worker inspect ping -d worker@$$HOSTNAME --timeout 5"]
-      interval: 30s
-      timeout: 10s
+      interval: 60s
+      timeout: 30s
       retries: 3
