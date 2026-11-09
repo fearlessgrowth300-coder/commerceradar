@@ -11,7 +11,7 @@ possible, and the operational decision taken. A lawyer should confirm before com
 | Common Crawl | Active (discovery) | Terms allow use incl. commercial, with a strong recommendation to get legal advice; third-party content rights stay with site owners |
 | crt.sh / Certificate Transparency | Active as **evidence only** | No published terms found; CT logs are public by design; operator rate limits apply |
 | Own crawler (stores' public pages) | Active | robots.txt honoured, opt-out list, no bot-wall bypass; content rights belong to site owners |
-| ICANN CZDS zone files (`czds_zonefile`) | **Built, disabled** — pending CZDS approval + legal review | Registry terms allow lawful use; forbid mass unsolicited advertising and high-volume automated queries to registry/registrar systems. Zone data never stored or redistributed; only DNS-matched candidate names kept |
+| ICANN CZDS zone files (`czds_zonefile`) | **Built, disabled** — pending CZDS approval + legal review | Registry terms allow lawful use; forbid mass unsolicited advertising and high-volume automated queries to registry/registrar systems. Raw zone deleted after diff; the latest full list of domain names stays on the VPS disk for the next diff (not in the database, never redistributed); only DNS-matched names enter the database |
 | Manual submissions | Active | — |
 
 ## urlscan.io — terms of service (https://urlscan.io/terms/, read 2026-11-04)
@@ -74,7 +74,7 @@ opt-outs.
   policies) allow use "only for lawful purposes" but never to support mass unsolicited commercial
   advertising/solicitation, nor to enable high-volume automated processes that query registry or
   registrar systems. Some registries add their own terms — read each one when approved.
-- **Our use:** zone data is diffed on the VPS and deleted; only names that resolve to a commerce
+- **Our use:** the raw zone is deleted after the diff, but the latest full list of second-level names stays on the VPS disk for the next day's diff (check each registry's retention terms). Only names that resolve to a commerce
   platform's IP range enter the database as candidates (with provenance), then are verified from the
   public website. No zone data is exported or shown to customers. DNS lookups go to our resolver,
   not to registry/registrar systems.
