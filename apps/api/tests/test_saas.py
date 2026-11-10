@@ -191,6 +191,22 @@ def test_export_limit_and_domains_only(db, client):
     assert client.get("/api/v1/exports/stores.csv", params={"q": tag, "limit": "x"}).status_code == 422
 
 
+def test_export_parts_split_rows_without_overlap(db, client, monkeypatch):
+    from app.services import workspace
+
+    monkeypatch.setattr(workspace, "PART_ROWS", {"domains": 2, "full": 2})
+    tag = uuid.uuid4().hex[:6]
+    for i in range(5):
+        make_store(db, host=f"part{i}{tag}.example", primary_platform="shopify")
+    get = lambda **p: client.get("/api/v1/exports/stores.csv", params={"q": tag, "columns": "domains", **p}).text.splitlines()[1:]  # noqa: E731
+    everything = get()
+    assert len(everything) == 5
+    parts = [get(part=k) for k in (1, 2, 3, 4)]
+    assert [len(p) for p in parts] == [2, 2, 1, 0]
+    assert sum(parts, []) == everything  # same order, no gaps, no duplicates
+    assert [len(get(part=k, limit=3)) for k in (1, 2)] == [2, 1]
+
+
 # ---------- suppression (opt-out) ----------
 
 

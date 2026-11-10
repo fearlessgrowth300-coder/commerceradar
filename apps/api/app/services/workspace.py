@@ -115,34 +115,49 @@ def mark_alerts_read(db: Session, org: Organization) -> int:
 
 
 ADMIN_EXPORT_MAX = 500_000  # ponytail: CSV is built in memory (~150 B/row full, ~25 B/row domains); stream if this grows
+# Rows per downloadable file: one response must stay under Vercel's 4.5 MB body cap (full ≈ 155 B/row, domains ≈ 25 B/row).
+PART_ROWS = {"domains": 100_000, "full": 20_000}
+
+
+def _positive_int(v, name: str) -> int | None:
+    v = str(v or "").strip()
+    if not v:
+        return None
+    if not v.isdigit() or int(v) < 1:
+        raise ValueError(f"{name} must be a positive whole number")
+    return int(v)
 
 
 def export_csv(db: Session, org: Organization, filters: dict, unlimited: bool = False) -> tuple[str, int, bool]:
     """→ (csv text, rows, truncated). Counts against the plan's monthly export quota unless `unlimited` (admins).
-    Extra params: `limit` = max rows wanted; `columns=domains` = one `domain` column only."""
+    Extra params: `limit` = max rows wanted; `columns=domains` = one `domain` column only;
+    `part=k` = only the k-th file of PART_ROWS rows (for downloads too big for one file)."""
+    filters = filters or {}
     kw = _query_kwargs(clean_filters(filters))
     _, total = stores.list_stores(db, **kw, page=1, page_size=1)
     allowed = min(total, ADMIN_EXPORT_MAX) if unlimited else billing.check_export(db, org, total)
-    limit = str((filters or {}).get("limit") or "").strip()
+    limit, part = _positive_int(filters.get("limit"), "limit"), _positive_int(filters.get("part"), "part")
     if limit:
-        if not limit.isdigit() or int(limit) < 1:
-            raise ValueError("limit must be a positive whole number")
-        allowed = min(allowed, int(limit))
-    domains_only = (filters or {}).get("columns") == "domains"
+        allowed = min(allowed, limit)
+    domains_only = filters.get("columns") == "domains"
+    size = PART_ROWS["domains" if domains_only else "full"]
+    pos = (part - 1) * size if part else 0  # index of the first row of the current page
+    end = min(allowed, pos + size) if part else allowed
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(("domain",) if domains_only else EXPORT_COLUMNS)
-    written, page = 0, 1
-    while written < allowed:
-        rows, _ = stores.list_stores(db, **kw, page=page, page_size=1000)
-        if not rows:
-            break
-        for st, dom, n in rows[: allowed - written]:
+    written, page = 0, (part or 1)
+    while pos < end:  # big pages: every page re-runs the grouped query, so fewer pages = much faster
+        rows, _ = stores.list_stores(db, **kw, page=page, page_size=size)
+        for st, dom, n in rows[: end - pos]:
             w.writerow([dom] if domains_only else [
                 dom, _safe(st.store_name), st.primary_platform, st.platform_confidence, st.ecommerce_status,
                 st.activity_status, st.business_country, st.first_verified_at and st.first_verified_at.isoformat(),
                 st.last_verified_at and st.last_verified_at.isoformat(), n])  # fmt: skip
             written += 1
+        if len(rows) < size:
+            break
+        pos += size
         page += 1
     billing.add_usage(db, org, "exports")
     billing.add_usage(db, org, "export_rows", written)
