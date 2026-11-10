@@ -1,3 +1,4 @@
+import { AutoRefresh } from "@/components/AutoRefresh";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -40,7 +41,7 @@ export default async function Discovery({
 
   return (
     <div className="space-y-6">
-      {pending && <meta httpEquiv="refresh" content="5" />}
+      {pending && <AutoRefresh seconds={5} />}
       <section className="rounded-lg border border-slate-200 bg-white p-4">
         <h2 className="mb-3 font-medium">Submit a domain</h2>
         <form action={submit} className="flex flex-col gap-2 sm:flex-row">

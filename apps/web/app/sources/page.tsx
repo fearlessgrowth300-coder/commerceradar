@@ -1,3 +1,4 @@
+import { AutoRefresh } from "@/components/AutoRefresh";
 import { redirect } from "next/navigation";
 import { apiFetch, fmtDate, getJson } from "@/lib/api";
 
@@ -67,7 +68,7 @@ export default async function Sources({ searchParams }: { searchParams: Promise<
 
   return (
     <div className="space-y-4">
-      {anyActive && <meta httpEquiv="refresh" content="10" />}
+      {anyActive && <AutoRefresh seconds={10} />}
       <div>
         <h1 className="text-lg font-semibold">Discovery sources</h1>
         <p className="text-sm text-slate-600">

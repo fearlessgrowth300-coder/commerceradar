@@ -1,3 +1,4 @@
+import { AutoRefresh } from "@/components/AutoRefresh";
 import { notFound } from "next/navigation";
 import { fmtDate, getJson, type Me } from "@/lib/api";
 
@@ -64,7 +65,7 @@ export default async function PipelinePage() {
   return (
     <div className="space-y-6">
       {/* refresh every 30 s while the page is open */}
-      <meta httpEquiv="refresh" content="30" />
+      <AutoRefresh seconds={30} />
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-xl font-semibold">Pipeline</h1>
         <span className="text-xs text-slate-500">updated {fmtDate(p.measured_at)} · refreshes every 30 s</span>

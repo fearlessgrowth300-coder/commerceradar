@@ -1,3 +1,4 @@
+import { AutoRefresh } from "@/components/AutoRefresh";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -58,7 +59,7 @@ export default async function DomainPage({
 
   return (
     <div className="space-y-6">
-      {inFlight && <meta httpEquiv="refresh" content="5" />}
+      {inFlight && <AutoRefresh seconds={5} />}
       <Link href="/discovery" className="text-sm text-slate-600">← Discovery</Link>
       <section className="rounded-lg border border-slate-200 bg-white p-4">
         <h1 className="text-lg font-semibold break-all">{domain.normalized_domain}</h1>
