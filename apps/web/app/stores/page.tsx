@@ -120,9 +120,29 @@ export default async function Stores({ searchParams }: { searchParams: Promise<R
           <label className="flex items-center gap-1 text-slate-600"><input type="checkbox" name="alerts" /> alert me about new matches</label>
           <button className="rounded-md border border-slate-300 px-3 py-1">Save this search</button>
         </form>
-        <a href={`/exports/stores?${new URLSearchParams(Object.fromEntries(FILTERS.filter((k) => sp[k]).map((k) => [k, sp[k]!])))}`} className="underline">
-          Export CSV
-        </a>
+        {/* Download: same filters as the list above, newest first unless another sort is chosen */}
+        <form action="/exports/stores" method="get" className="flex flex-wrap items-center gap-2">
+          {FILTERS.map((k) => sp[k] && <input key={k} type="hidden" name={k} value={sp[k]} />)}
+          <label className="flex items-center gap-1 text-slate-600">
+            Download
+            <input
+              type="number"
+              name="limit"
+              min={1}
+              step={1}
+              defaultValue={Math.min(1000, data?.total ?? 1000) || 1000}
+              aria-label="Number of stores to download"
+              className="w-28 rounded-md border border-slate-300 px-2 py-1"
+            />
+            stores
+          </label>
+          <select name="columns" defaultValue="domains" aria-label="File contents" className="rounded-md border border-slate-300 px-2 py-1">
+            <option value="domains">domains only</option>
+            <option value="full">full details</option>
+          </select>
+          <button className="rounded-md bg-slate-900 px-3 py-1 text-white">Download CSV</button>
+          {data && <span className="text-xs text-slate-500">{data.total.toLocaleString("en-US")} match these filters</span>}
+        </form>
       </div>
 
       {!data ? (

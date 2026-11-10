@@ -18,7 +18,7 @@ from app.services import billing, stores
 
 FILTER_KEYS = ("q", "platform", "activity", "country", "ecommerce_status", "signal", "verified_from", "verified_to", "sort")
 EXPORT_COLUMNS = ("domain", "store_name", "primary_platform", "platform_confidence", "ecommerce_status", "activity_status",
-                  "first_verified_at", "last_verified_at", "products_observed")  # fmt: skip
+                  "business_country", "first_verified_at", "last_verified_at", "products_observed")  # fmt: skip
 
 
 class NotFound(Exception):
@@ -114,23 +114,34 @@ def mark_alerts_read(db: Session, org: Organization) -> int:
 # ---------- exports ----------
 
 
-def export_csv(db: Session, org: Organization, filters: dict) -> tuple[str, int, bool]:
-    """→ (csv text, rows, truncated). Counts against the plan's monthly export quota."""
+ADMIN_EXPORT_MAX = 500_000  # ponytail: CSV is built in memory (~150 B/row full, ~25 B/row domains); stream if this grows
+
+
+def export_csv(db: Session, org: Organization, filters: dict, unlimited: bool = False) -> tuple[str, int, bool]:
+    """→ (csv text, rows, truncated). Counts against the plan's monthly export quota unless `unlimited` (admins).
+    Extra params: `limit` = max rows wanted; `columns=domains` = one `domain` column only."""
     kw = _query_kwargs(clean_filters(filters))
     _, total = stores.list_stores(db, **kw, page=1, page_size=1)
-    allowed = billing.check_export(db, org, total)
+    allowed = min(total, ADMIN_EXPORT_MAX) if unlimited else billing.check_export(db, org, total)
+    limit = str((filters or {}).get("limit") or "").strip()
+    if limit:
+        if not limit.isdigit() or int(limit) < 1:
+            raise ValueError("limit must be a positive whole number")
+        allowed = min(allowed, int(limit))
+    domains_only = (filters or {}).get("columns") == "domains"
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(EXPORT_COLUMNS)
+    w.writerow(("domain",) if domains_only else EXPORT_COLUMNS)
     written, page = 0, 1
     while written < allowed:
         rows, _ = stores.list_stores(db, **kw, page=page, page_size=1000)
         if not rows:
             break
         for st, dom, n in rows[: allowed - written]:
-            w.writerow([dom, _safe(st.store_name), st.primary_platform, st.platform_confidence, st.ecommerce_status,
-                        st.activity_status, st.first_verified_at and st.first_verified_at.isoformat(),
-                        st.last_verified_at and st.last_verified_at.isoformat(), n])  # fmt: skip
+            w.writerow([dom] if domains_only else [
+                dom, _safe(st.store_name), st.primary_platform, st.platform_confidence, st.ecommerce_status,
+                st.activity_status, st.business_country, st.first_verified_at and st.first_verified_at.isoformat(),
+                st.last_verified_at and st.last_verified_at.isoformat(), n])  # fmt: skip
             written += 1
         page += 1
     billing.add_usage(db, org, "exports")

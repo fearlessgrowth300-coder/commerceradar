@@ -140,7 +140,7 @@ def read_alerts(ctx: Ctx = Depends(current), db: Session = Depends(get_db)):
 @router.get("/exports/stores.csv")
 def export_stores(request: Request, ctx: Ctx = Depends(current), db: Session = Depends(get_db)):
     try:
-        text, rows, truncated = workspace.export_csv(db, ctx.org, dict(request.query_params))
+        text, rows, truncated = workspace.export_csv(db, ctx.org, dict(request.query_params), unlimited=ctx.user.is_admin)
     except billing.LimitExceeded as e:
         raise HTTPException(402, str(e)) from e
     except ValueError as e:

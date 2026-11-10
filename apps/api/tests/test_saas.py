@@ -178,6 +178,19 @@ def test_export_csv_quota_and_injection_guard(db):
     assert member.get("/api/v1/account").json()["usage"]["exports"] == billing.PLANS["free"]["exports_per_month"]
 
 
+def test_export_limit_and_domains_only(db, client):
+    tag = uuid.uuid4().hex[:6]
+    for i in range(3):
+        make_store(db, host=f"lim{i}{tag}.example", primary_platform="shopify")
+    r = client.get("/api/v1/exports/stores.csv", params={"q": tag, "limit": 2, "columns": "domains"})  # admin: no plan cap
+    assert r.status_code == 200 and r.headers["x-rows"] == "2"
+    lines = r.text.strip().splitlines()
+    assert lines[0] == "domain" and len(lines) == 3 and all(l.endswith(f"{tag}.example") for l in lines[1:])
+    full = client.get("/api/v1/exports/stores.csv", params={"q": tag}).text.splitlines()[0]
+    assert "business_country" in full
+    assert client.get("/api/v1/exports/stores.csv", params={"q": tag, "limit": "x"}).status_code == 422
+
+
 # ---------- suppression (opt-out) ----------
 
 
