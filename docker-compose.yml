@@ -62,14 +62,14 @@ services:
 
   verifier:
     restart: unless-stopped # survive crashes and VPS reboots (set 2026-11-10)
-    # Verification + product queues on threads: both are mostly waiting on the network (a check is
-    # ~0.1 s CPU; product runs sleep PRODUCT_PAGE_DELAY between pages), so threads run many at once
-    # cheaply (measured 2026-11-09: 8 threads ~35k checks/h). Verification rate is still capped by
-    # MONITOR_BACKLOG_PER_TICK / MONITOR_MAX_IN_FLIGHT. Keep threads <= 15: a product run holds a DB
-    # connection while it sleeps, and the SQLAlchemy pool is 5 + 10 overflow per process.
+    # Verification queue on threads: a check is ~0.1 s CPU and mostly waiting on the network, so threads
+    # run many at once cheaply (measured 2026-11-09: 8 threads ~35k checks/h). Rate is still capped by
+    # MONITOR_BACKLOG_PER_TICK / MONITOR_MAX_IN_FLIGHT. Products have their own service: sharing threads,
+    # long product runs held all 12 and checks stalled (2026-11-10: 0 checks running, 12 product runs).
+    # Keep threads <= 15 per service: SQLAlchemy pool is 5 + 10 overflow per process.
     build: ./apps/api
     init: true
-    command: celery -A app.worker worker -Q verification,products --pool threads --concurrency=${VERIFIER_THREADS:-12} --loglevel=info --hostname=verifier@%h
+    command: celery -A app.worker worker -Q verification --pool threads --concurrency=${VERIFIER_THREADS:-12} --loglevel=info --hostname=verifier@%h
     environment: *api-env
     volumes: [./apps/api:/app]
     stop_grace_period: 60s
@@ -78,6 +78,25 @@ services:
       redis: { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.worker inspect ping -d verifier@$$HOSTNAME --timeout 5"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+
+  producer:
+    restart: unless-stopped
+    # Product extraction on threads. Runs mostly sleep PRODUCT_PAGE_DELAY between pages (polite per-site
+    # pacing), holding a DB connection meanwhile — so threads <= 15 (pool 5 + 10 overflow).
+    build: ./apps/api
+    init: true
+    command: celery -A app.worker worker -Q products --pool threads --concurrency=${PRODUCER_THREADS:-12} --loglevel=info --hostname=producer@%h
+    environment: *api-env
+    volumes: [./apps/api:/app]
+    stop_grace_period: 60s
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.worker inspect ping -d producer@$$HOSTNAME --timeout 5"]
       interval: 60s
       timeout: 30s
       retries: 3
