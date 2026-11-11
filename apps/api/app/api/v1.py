@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import Ctx, admin, current
 from app.db import get_db
 from app.models import CrawlJob, DiscoveryRun, DiscoverySource, Product, Store
-from app.services import dashboard, discovery, domains, monitoring, products, provenance, signals, stores
+from app.services import catalog, dashboard, discovery, domains, monitoring, products, provenance, signals, stores, workspace
 
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(current)])  # every route needs a session
 
@@ -331,6 +331,13 @@ class StoreRow(BaseModel):
     last_verified_at: datetime | None
     product_count: int
     business_country: str | None = None  # self-reported by the store (Shopify settings)
+    language: str | None = None
+    category_group: str | None = None  # inferred
+    category: str | None = None  # inferred
+    formats: list[str] = []  # digital observed; pod/cod/dropshipping inferred
+    published_products: int | None = None
+    first_product_at: datetime | None = None
+    latest_product_at: datetime | None = None
     restricted: bool = False
 
 
@@ -387,6 +394,18 @@ class StoreFull(BaseModel):
     business_city: str | None = None
     location_source: str | None = None
     location_checked_at: datetime | None = None
+    language: str | None = None
+    published_products: int | None = None
+    first_product_at: datetime | None = None
+    latest_product_at: datetime | None = None
+    category_group: str | None = None
+    category: str | None = None
+    category_confidence: float | None = None
+    is_pod: bool | None = None
+    is_cod: bool | None = None
+    is_dropshipping: bool | None = None
+    is_digital: bool | None = None
+    catalog_checked_at: datetime | None = None
 
 
 class StoreDetailOut(BaseModel):
@@ -444,9 +463,18 @@ def _store_rows(rows) -> list[dict]:
         {"id": st.id, "domain": dom, "store_name": st.store_name, "primary_platform": st.primary_platform,
          "platform_confidence": st.platform_confidence, "ecommerce_status": st.ecommerce_status,
          "activity_status": st.activity_status, "first_verified_at": st.first_verified_at,
-         "last_verified_at": st.last_verified_at, "product_count": n, "business_country": st.business_country}
+         "last_verified_at": st.last_verified_at, "product_count": n, "business_country": st.business_country,
+         "language": st.language, "category_group": st.category_group, "category": st.category,
+         "formats": workspace.store_formats(st), "published_products": st.published_products,
+         "first_product_at": st.first_product_at, "latest_product_at": st.latest_product_at}
         for st, dom, n in rows
     ]  # fmt: skip
+
+
+@router.get("/categories")
+def list_categories():
+    """The store category list (group -> subcategories). Store categories are inferred from products."""
+    return [{"group": g, "subcategories": list(subs)} for g, subs in catalog.TAXONOMY.items()]
 
 
 @router.get("/stores", response_model=StorePage)
@@ -459,9 +487,16 @@ def list_stores(
     ecommerce_status: str | None = Query(None, pattern="^(confirmed_ecommerce|probable_ecommerce)$"),
     signal: str | None = Query(None),
     new_only: bool = Query(False, description="skip stores your organization already downloaded"),
+    language: str | None = Query(None, pattern="^[A-Za-z]{2}$"),
+    category: str | None = Query(None, max_length=60),
+    format: str | None = Query(None, pattern="^(pod|cod|dropshipping|digital)$"),
+    first_product_from: datetime | None = None,
+    first_product_to: datetime | None = None,
+    latest_product_from: datetime | None = None,
+    latest_product_to: datetime | None = None,
     verified_from: datetime | None = None,
     verified_to: datetime | None = None,
-    sort: str = Query("newest", pattern="^(newest|oldest|last_verified|name|products)$"),
+    sort: str = Query("newest", pattern="^(newest|oldest|last_verified|name|products|latest_product|store_created)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     ctx: Ctx = Depends(current),
@@ -472,6 +507,8 @@ def list_stores(
         db, q=q, platform=platform, activity=activity, country=country, ecommerce_status=ecommerce_status, signal=signal,
         verified_from=verified_from, verified_to=verified_to, sort=sort, page=page, page_size=page_size,
         include_restricted=admin_view, not_exported_by=ctx.org.id if new_only else None,
+        language=language, category=category, format=format, first_product_from=first_product_from,
+        first_product_to=first_product_to, latest_product_from=latest_product_from, latest_product_to=latest_product_to,
     )  # fmt: skip
     items = _store_rows(rows)
     flagged = provenance.restricted_ids(db, [r["id"] for r in items]) if admin_view else set()

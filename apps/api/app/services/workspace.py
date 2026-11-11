@@ -17,26 +17,41 @@ from app.models import (Alert, AuthSession, CrawlJob, Domain, ExportedStore, Mem
                         UsageCounter)  # fmt: skip
 from app.services import billing, stores
 
-FILTER_KEYS = ("q", "platform", "activity", "country", "ecommerce_status", "signal", "verified_from", "verified_to", "sort")
+DATE_KEYS = ("verified_from", "verified_to", "first_product_from", "first_product_to", "latest_product_from", "latest_product_to")
+FILTER_KEYS = ("q", "platform", "activity", "country", "language", "category", "format", "ecommerce_status", "signal", *DATE_KEYS, "sort")
 EXPORT_COLUMNS = ("domain", "store_name", "primary_platform", "platform_confidence", "ecommerce_status", "activity_status",
-                  "business_country", "first_verified_at", "last_verified_at", "products_observed")  # fmt: skip
+                  "business_country", "language", "category_group", "category", "formats", "published_products",
+                  "first_product_at", "latest_product_at", "first_verified_at", "last_verified_at", "products_observed")  # fmt: skip
 
 
 class NotFound(Exception):
     pass
 
 
+FORMATS = ("pod", "cod", "dropshipping", "digital")
+
+
+def store_formats(st) -> list[str]:
+    return [f for f in FORMATS if getattr(st, f"is_{f}")]
+
+
+def _iso(v) -> str | None:
+    return v.isoformat() if v else None
+
+
 def clean_filters(raw: dict) -> dict:
     out = {k: str(v)[:253] for k, v in (raw or {}).items() if k in FILTER_KEYS and v not in (None, "")}
-    for k in ("verified_from", "verified_to"):
+    if out.get("format") and out["format"] not in FORMATS:
+        raise ValueError(f"format must be one of {', '.join(FORMATS)}")
+    for k in DATE_KEYS:
         if k in out:
             out[k] = datetime.fromisoformat(out[k]).isoformat()  # ValueError → 422 upstream
     return out
 
 
 def _query_kwargs(filters: dict) -> dict:
-    kw = {k: v for k, v in filters.items() if k not in ("verified_from", "verified_to")}
-    for k in ("verified_from", "verified_to"):
+    kw = {k: v for k, v in filters.items() if k not in DATE_KEYS}
+    for k in DATE_KEYS:
         if k in filters:
             dt = datetime.fromisoformat(filters[k])
             kw[k] = dt if dt.tzinfo else dt.replace(tzinfo=UTC)
@@ -161,8 +176,9 @@ def export_csv(db: Session, org: Organization, filters: dict, unlimited: bool = 
         for st, dom, n in rows[: end - pos]:
             w.writerow([dom] if domains_only else [
                 dom, _safe(st.store_name), st.primary_platform, st.platform_confidence, st.ecommerce_status,
-                st.activity_status, st.business_country, st.first_verified_at and st.first_verified_at.isoformat(),
-                st.last_verified_at and st.last_verified_at.isoformat(), n])  # fmt: skip
+                st.activity_status, st.business_country, st.language, st.category_group, st.category,
+                " ".join(store_formats(st)), st.published_products, _iso(st.first_product_at), _iso(st.latest_product_at),
+                _iso(st.first_verified_at), _iso(st.last_verified_at), n])  # fmt: skip
             ids.append(st.id)
         if len(rows) < size:
             break

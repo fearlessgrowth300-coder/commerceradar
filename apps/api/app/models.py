@@ -171,6 +171,20 @@ class Store(Base):
     business_city: Mapped[str | None] = mapped_column(String(100))
     location_source: Mapped[str | None] = mapped_column(String(30))
     location_checked_at: Mapped[datetime | None] = _opt_ts()
+    # Catalog profile (M22, app/services/catalog.py). Observed: language, product dates/count, is_digital.
+    # Inferred (labelled in the UI): category, is_pod, is_cod, is_dropshipping.
+    language: Mapped[str | None] = mapped_column(String(8), index=True)  # homepage <html lang>, 2 letters
+    published_products: Mapped[int | None] = mapped_column(Integer)
+    first_product_at: Mapped[datetime | None] = _opt_ts(index=True)  # oldest product seen: "store created" proxy
+    latest_product_at: Mapped[datetime | None] = _opt_ts(index=True)
+    category_group: Mapped[str | None] = mapped_column(String(60), index=True)
+    category: Mapped[str | None] = mapped_column(String(60), index=True)
+    category_confidence: Mapped[float | None] = mapped_column(Float)
+    is_pod: Mapped[bool | None] = mapped_column(Boolean)
+    is_cod: Mapped[bool | None] = mapped_column(Boolean)
+    is_dropshipping: Mapped[bool | None] = mapped_column(Boolean)
+    is_digital: Mapped[bool | None] = mapped_column(Boolean)
+    catalog_checked_at: Mapped[datetime | None] = _opt_ts(index=True)
     last_observed_at: Mapped[datetime | None] = _opt_ts()
     created_at: Mapped[datetime] = _ts()
     updated_at: Mapped[datetime] = _updated()

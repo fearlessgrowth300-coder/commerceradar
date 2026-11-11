@@ -26,7 +26,7 @@ from app.config import settings
 from app.models import CrawlJob, Domain, Product, ProductObservation, Store, StoreObservation
 from app.security.ssrf import BlockedDestination, DnsFailure
 from app.services.fetcher import FetchError, SafeFetcher
-from app.services import signals
+from app.services import catalog, signals
 from app.services.verification import PRODUCT_PATH, _robots
 
 AVAILABILITY = {
@@ -361,6 +361,7 @@ def extract_store(db: Session, store: Store, fetcher: SafeFetcher, max_pages: in
     delay = max(delay, min(float(robots.crawl_delay(ua) or 0), 10.0))
     if store.primary_platform == "shopify":
         update_location(store, fetcher, base, robots, ua)
+    catalog.update_catalog(store, fetcher, base, robots, ua)  # language, product dates, formats, category
 
     urls = _sitemaps(fetcher, base, robots, host, stats)
     if len(urls) < max_pages and robots.can_fetch(ua, base):

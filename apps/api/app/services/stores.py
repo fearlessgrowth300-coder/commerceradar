@@ -10,12 +10,15 @@ from app.services import provenance
 from app.models import (DiscoveredUrl, DiscoverySource, Domain, ExportedStore, PlatformDetection, Product, Store,
                         StoreObservation, StoreSignal)
 
+FORMAT_COLUMNS = {"pod": Store.is_pod, "cod": Store.is_cod, "dropshipping": Store.is_dropshipping, "digital": Store.is_digital}
 SORTS = {
     "newest": (Store.first_verified_at.desc().nulls_last(),),
     "oldest": (Store.first_verified_at.asc().nulls_last(),),
     "last_verified": (Store.last_verified_at.desc().nulls_last(),),
     "name": (func.lower(func.coalesce(Store.store_name, Domain.normalized_domain)).asc(),),
     "products": (func.coalesce(func.count(Product.id), 0).desc(),),
+    "latest_product": (Store.latest_product_at.desc().nulls_last(),),
+    "store_created": (Store.first_product_at.desc().nulls_last(),),
 }
 
 
@@ -35,6 +38,13 @@ def list_stores(
     page_size: int = 50,
     include_restricted: bool = False,
     not_exported_by: uuid.UUID | None = None,  # organization id: skip stores it already downloaded
+    language: str | None = None,
+    category: str | None = None,  # a group ("Pet Supplies") or a subcategory ("Pet Toys")
+    format: str | None = None,  # pod | cod | dropshipping | digital
+    first_product_from: datetime | None = None,
+    first_product_to: datetime | None = None,
+    latest_product_from: datetime | None = None,
+    latest_product_to: datetime | None = None,
 ):
     products = func.count(Product.id).label("product_count")
     stmt = (
@@ -64,6 +74,18 @@ def list_stores(
             .where(ExportedStore.organization_id == not_exported_by, ExportedStore.store_id == Store.id)
             .exists()
         )
+    if language:
+        stmt = stmt.where(Store.language == language.lower())
+    if category:
+        stmt = stmt.where((Store.category_group == category) | (Store.category == category))
+    if format:
+        stmt = stmt.where(FORMAT_COLUMNS[format].is_(True))
+    for col, lo, hi in ((Store.first_product_at, first_product_from, first_product_to),
+                        (Store.latest_product_at, latest_product_from, latest_product_to)):
+        if lo:
+            stmt = stmt.where(col >= lo)
+        if hi:
+            stmt = stmt.where(col < hi)
     if ecommerce_status:
         stmt = stmt.where(Store.ecommerce_status == ecommerce_status)
     if verified_from:
