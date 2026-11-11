@@ -177,7 +177,7 @@ def run_discovery_batch(self, run_id: str, seq: int) -> str:
         run.cursor = {**batch.cursor, "seq": seq + 1, "log": log_lines, "verify_queued": used + stats["queued"]}
         run.error_summary = None
         db.commit()
-        delay = float(config.get("interval_seconds", 5))
+        delay = float((batch.cursor or {}).get("wait") or config.get("interval_seconds", 5))  # adapters may ask to poll slower
     run_discovery_batch.apply_async(args=[run_id, seq + 1], countdown=delay)
     return "continued"
 

@@ -26,6 +26,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "czds_password", "p")
     ips = {"newshopify.shop": ["23.227.38.65"], "newother.shop": ["104.21.1.1"]}
     monkeypatch.setattr(czds, "apex_ips", lambda n: ips.get(n, []))
+    # the background prepare runs inline here, with the mocked client
+    monkeypatch.setattr(czds, "launch_prepare", lambda tld, day, url, workdir, client=None: czds.prepare(tld, day, url, workdir, client))
     served = {}
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -69,3 +71,25 @@ def test_missing_credentials_is_a_permanent_error(env, monkeypatch):
     monkeypatch.setattr(settings, "czds_password", "")
     with pytest.raises(SourceError):
         run("2032-02-01", env[1])
+
+
+def test_prepare_runs_in_background_and_is_polled(env, tmp_path, monkeypatch):
+    served, client = env
+    served["zone"] = zone("a1")
+    started = []
+    monkeypatch.setattr(czds, "launch_prepare", lambda *a, **k: started.append(a[0]))  # nothing finishes yet
+    cfg, cursor = {"tlds": ["shop"]}, {"day": "2032-03-01"}
+    b = czds.Czds().fetch_batch(cfg, cursor, {}, Ctx(fetcher=None, db=None), client=client)
+    assert started == ["shop"] and b.note == ".shop: download started" and b.cursor["wait"] == czds.PREPARE_POLL_SECONDS
+    b = czds.Czds().fetch_batch(cfg, b.cursor, {}, Ctx(fetcher=None, db=None), client=client)
+    assert b.note == ".shop: preparing (download + diff)" and started == ["shop"]  # polled, not relaunched
+
+
+def test_prepare_failure_skips_the_tld_for_today(env, monkeypatch):
+    served, client = env
+    def boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(czds, "download", boom)
+    found, notes, _ = run("2032-04-01", client)
+    assert found == [] and any(n.startswith(".shop: download/diff failed (OSError: disk full)") for n in notes)
+    assert notes[-1] == "all TLDs done"
