@@ -143,7 +143,7 @@ def _tags(p: dict) -> list[str]:
 
 
 def classify(store_name: str | None, products: list[dict]) -> tuple[str | None, str | None, float]:
-    """→ (group, subcategory, confidence 0..1). Weighted keyword hits: product types 3, tags 2, titles 1, name 2."""
+    """→ (group, subcategory, confidence 0..1). Weighted keyword hit counts: product types 3, tags 2, titles 1, name 2."""
     scores: Counter = Counter()  # (group, subcategory) -> weight
     extra: Counter = Counter()  # group-only words
 
@@ -152,18 +152,18 @@ def classify(store_name: str | None, products: list[dict]) -> tuple[str | None, 
         if not t.strip():
             return
         for key, pat in _PATTERNS.items():
-            if pat.search(t):
-                scores[key] += weight
+            if n := len(pat.findall(t)):
+                scores[key] += weight * n
         for g, pat in _GROUP_PATTERNS.items():
-            if pat.search(t):
-                extra[g] += weight
+            if n := len(pat.findall(t)):
+                extra[g] += weight * n
 
     if store_name:
         add(store_name, 2)
-    for p in products:
-        add(str(p.get("product_type") or ""), 3)
-        add(" | ".join(_tags(p)), 2)
-        add(str(p.get("title") or ""), 1)
+    # one pass per text kind (not per product): each pattern runs 3 times per store, not 3 x products
+    add(" | ".join(str(p.get("product_type") or "") for p in products), 3)
+    add(" | ".join(" | ".join(_tags(p)) for p in products), 2)
+    add(" | ".join(str(p.get("title") or "") for p in products), 1)
     groups: Counter = Counter()
     for (g, _), v in scores.items():
         groups[g] += v

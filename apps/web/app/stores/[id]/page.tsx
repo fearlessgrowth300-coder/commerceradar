@@ -30,6 +30,18 @@ type Detail = {
     business_region?: string | null;
     business_city?: string | null;
     location_checked_at?: string | null;
+    language?: string | null;
+    published_products?: number | null;
+    first_product_at?: string | null;
+    latest_product_at?: string | null;
+    category_group?: string | null;
+    category?: string | null;
+    category_confidence?: number | null;
+    is_pod?: boolean | null;
+    is_cod?: boolean | null;
+    is_dropshipping?: boolean | null;
+    is_digital?: boolean | null;
+    catalog_checked_at?: string | null;
     first_verified_at: string | null;
     last_verified_at: string | null;
     last_successful_check_at: string | null;
@@ -84,6 +96,23 @@ export default async function StorePage({ params }: { params: Promise<{ id: stri
                 : s.location_checked_at ? "not published" : "not checked yet"}
             </dd>
           </div>
+          <div><dt className="text-slate-500">Language</dt><dd className="uppercase">{s.language ?? (s.catalog_checked_at ? "not declared" : "not checked yet")}</dd></div>
+          <div>
+            <dt className="text-slate-500" title="Inferred from product types, tags and titles">Category (inferred)</dt>
+            <dd>{s.category_group ? [s.category_group, s.category].filter(Boolean).join(" › ") + pct(s.category_confidence ?? null) : s.catalog_checked_at ? "not enough evidence" : "not checked yet"}</dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">Product format</dt>
+            <dd>
+              {[s.is_dropshipping && "Dropshipping (inferred)", s.is_pod && "Print on demand (inferred)", s.is_cod && "Cash on delivery (inferred)", s.is_digital && "Digital products"].filter(Boolean).join(", ") || (s.catalog_checked_at ? "none detected" : "not checked yet")}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-slate-500" title="Shopify does not publish a store's opening date; this is the oldest listed product we saw">Store created (first product)</dt>
+            <dd>{fmtDate(s.first_product_at ?? null)}</dd>
+          </div>
+          <div><dt className="text-slate-500">Latest product added</dt><dd>{fmtDate(s.latest_product_at ?? null)}</dd></div>
+          <div><dt className="text-slate-500">Published products (Shopify list)</dt><dd>{s.published_products ?? "—"}</dd></div>
           <div><dt className="text-slate-500">First discovered</dt><dd>{fmtDate(d.domain_first_seen_at)}</dd></div>
           <div><dt className="text-slate-500">First verified</dt><dd>{fmtDate(s.first_verified_at)}</dd></div>
           <div><dt className="text-slate-500">Last verified</dt><dd>{fmtDate(s.last_verified_at)}</dd></div>
