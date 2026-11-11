@@ -7,7 +7,8 @@ from sqlalchemy import func, select, true
 from sqlalchemy.orm import Session
 
 from app.services import provenance
-from app.models import DiscoveredUrl, DiscoverySource, Domain, PlatformDetection, Product, Store, StoreObservation, StoreSignal
+from app.models import (DiscoveredUrl, DiscoverySource, Domain, ExportedStore, PlatformDetection, Product, Store,
+                        StoreObservation, StoreSignal)
 
 SORTS = {
     "newest": (Store.first_verified_at.desc().nulls_last(),),
@@ -33,6 +34,7 @@ def list_stores(
     page: int = 1,
     page_size: int = 50,
     include_restricted: bool = False,
+    not_exported_by: uuid.UUID | None = None,  # organization id: skip stores it already downloaded
 ):
     products = func.count(Product.id).label("product_count")
     stmt = (
@@ -56,6 +58,12 @@ def list_stores(
         stmt = stmt.where(Store.activity_status == activity)
     if country:
         stmt = stmt.where(Store.business_country == country.upper())
+    if not_exported_by:
+        stmt = stmt.where(
+            ~select(ExportedStore.id)
+            .where(ExportedStore.organization_id == not_exported_by, ExportedStore.store_id == Store.id)
+            .exists()
+        )
     if ecommerce_status:
         stmt = stmt.where(Store.ecommerce_status == ecommerce_status)
     if verified_from:

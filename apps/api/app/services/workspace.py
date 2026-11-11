@@ -10,9 +10,10 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.models import (Alert, AuthSession, CrawlJob, Domain, Membership, Organization, SavedSearch, Store, User,
+from app.models import (Alert, AuthSession, CrawlJob, Domain, ExportedStore, Membership, Organization, SavedSearch, Store, User,
                         UsageCounter)  # fmt: skip
 from app.services import billing, stores
 
@@ -131,9 +132,13 @@ def _positive_int(v, name: str) -> int | None:
 def export_csv(db: Session, org: Organization, filters: dict, unlimited: bool = False) -> tuple[str, int, bool]:
     """→ (csv text, rows, truncated). Counts against the plan's monthly export quota unless `unlimited` (admins).
     Extra params: `limit` = max rows wanted; `columns=domains` = one `domain` column only;
-    `part=k` = only the k-th file of PART_ROWS rows (for downloads too big for one file)."""
+    `part=k` = only the k-th file of PART_ROWS rows (for downloads too big for one file);
+    `new_only=1` = skip stores this organization already downloaded. Every downloaded store is recorded."""
     filters = filters or {}
     kw = _query_kwargs(clean_filters(filters))
+    new_only = str(filters.get("new_only") or "").lower() in ("1", "true", "on", "yes")
+    if new_only:
+        kw["not_exported_by"] = org.id
     _, total = stores.list_stores(db, **kw, page=1, page_size=1)
     allowed = min(total, ADMIN_EXPORT_MAX) if unlimited else billing.check_export(db, org, total)
     limit, part = _positive_int(filters.get("limit"), "limit"), _positive_int(filters.get("part"), "part")
@@ -143,10 +148,14 @@ def export_csv(db: Session, org: Organization, filters: dict, unlimited: bool = 
     size = PART_ROWS["domains" if domains_only else "full"]
     pos = (part - 1) * size if part else 0  # index of the first row of the current page
     end = min(allowed, pos + size) if part else allowed
+    page = part or 1
+    if part and new_only:  # earlier parts are already recorded as downloaded: part k is simply the next rows
+        pos, page = 0, 1
+        end = max(0, min(size, allowed, (limit - (part - 1) * size) if limit else size))
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(("domain",) if domains_only else EXPORT_COLUMNS)
-    written, page = 0, (part or 1)
+    ids: list[uuid.UUID] = []
     while pos < end:  # big pages: every page re-runs the grouped query, so fewer pages = much faster
         rows, _ = stores.list_stores(db, **kw, page=page, page_size=size)
         for st, dom, n in rows[: end - pos]:
@@ -154,11 +163,18 @@ def export_csv(db: Session, org: Organization, filters: dict, unlimited: bool = 
                 dom, _safe(st.store_name), st.primary_platform, st.platform_confidence, st.ecommerce_status,
                 st.activity_status, st.business_country, st.first_verified_at and st.first_verified_at.isoformat(),
                 st.last_verified_at and st.last_verified_at.isoformat(), n])  # fmt: skip
-            written += 1
+            ids.append(st.id)
         if len(rows) < size:
             break
         pos += size
         page += 1
+    written = len(ids)
+    for k in range(0, written, 5000):  # remember what this organization has downloaded
+        db.execute(
+            pg_insert(ExportedStore)
+            .values([{"id": uuid.uuid4(), "organization_id": org.id, "store_id": i} for i in ids[k : k + 5000]])
+            .on_conflict_do_nothing(constraint="uq_exported_stores_organization_id")
+        )
     billing.add_usage(db, org, "exports")
     billing.add_usage(db, org, "export_rows", written)
     db.commit()

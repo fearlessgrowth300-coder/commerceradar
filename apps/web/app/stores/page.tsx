@@ -140,6 +140,9 @@ export default async function Stores({ searchParams }: { searchParams: Promise<R
             <option value="domains">domains only</option>
             <option value="full">full details</option>
           </select>
+          <label className="flex items-center gap-1 text-slate-600" title="Your team's earlier downloads are remembered; ticked = only stores nobody on your account has downloaded yet">
+            <input type="checkbox" name="new_only" value="1" defaultChecked /> skip stores already downloaded
+          </label>
           <button className="rounded-md bg-slate-900 px-3 py-1 text-white">Download CSV</button>
           {data && <span className="text-xs text-slate-500">{data.total.toLocaleString("en-US")} match these filters</span>}
         </form>

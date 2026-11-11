@@ -391,6 +391,17 @@ class UsageCounter(Base):
     count: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class ExportedStore(Base):
+    """Stores an organization has already downloaded, so later downloads can skip them (shared by the team)."""
+
+    __tablename__ = "exported_stores"
+    __table_args__ = (UniqueConstraint("organization_id", "store_id"),)
+    id: Mapped[uuid.UUID] = _pk()
+    organization_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizations.id"))
+    store_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("stores.id"), index=True)
+    first_exported_at: Mapped[datetime] = _ts()
+
+
 class SuppressionEvent(Base):
     """Append-only audit trail of opt-out changes (M10). Survives un-suppression."""
 

@@ -308,3 +308,27 @@ def test_cli_create_admin(db, capsys):
     assert db.scalar(select(User).where(User.email == e)).is_admin
     assert accounts.login(db, e, password)
     assert cli.main(["create-admin", e]) == 1  # duplicate
+
+
+def test_new_only_downloads_never_repeat_a_store(db, client, monkeypatch):
+    from app.services import workspace
+
+    tag = uuid.uuid4().hex[:6]
+    for i in range(5):
+        make_store(db, host=f"new{i}{tag}.example", primary_platform="shopify")
+    get = lambda **p: client.get("/api/v1/exports/stores.csv", params={"q": tag, "columns": "domains", **p}).text.splitlines()[1:]  # noqa: E731
+    first = get(new_only=1, limit=2)
+    second = get(new_only=1, limit=2)
+    third = get(new_only=1, limit=2)
+    assert [len(first), len(second), len(third)] == [2, 2, 1]
+    assert len(set(first + second + third)) == 5  # no store twice
+    assert get(new_only=1) == []  # everything downloaded
+    assert len(get()) == 5  # without the box ticked, everything is still available
+    assert client.get("/api/v1/stores", params={"q": tag, "new_only": True}).json()["total"] == 0
+
+    monkeypatch.setattr(workspace, "PART_ROWS", {"domains": 2, "full": 2})
+    tag2 = uuid.uuid4().hex[:6]
+    for i in range(5):
+        make_store(db, host=f"np{i}{tag2}.example", primary_platform="shopify")
+    parts = [client.get("/api/v1/exports/stores.csv", params={"q": tag2, "columns": "domains", "new_only": 1, "limit": 5, "part": k}).text.splitlines()[1:] for k in (1, 2, 3)]
+    assert [len(p) for p in parts] == [2, 2, 1] and len(set(sum(parts, []))) == 5

@@ -458,6 +458,7 @@ def list_stores(
     country: str | None = Query(None, pattern="^[A-Za-z]{2}$"),
     ecommerce_status: str | None = Query(None, pattern="^(confirmed_ecommerce|probable_ecommerce)$"),
     signal: str | None = Query(None),
+    new_only: bool = Query(False, description="skip stores your organization already downloaded"),
     verified_from: datetime | None = None,
     verified_to: datetime | None = None,
     sort: str = Query("newest", pattern="^(newest|oldest|last_verified|name|products)$"),
@@ -470,7 +471,7 @@ def list_stores(
     rows, total = stores.list_stores(
         db, q=q, platform=platform, activity=activity, country=country, ecommerce_status=ecommerce_status, signal=signal,
         verified_from=verified_from, verified_to=verified_to, sort=sort, page=page, page_size=page_size,
-        include_restricted=admin_view,
+        include_restricted=admin_view, not_exported_by=ctx.org.id if new_only else None,
     )  # fmt: skip
     items = _store_rows(rows)
     flagged = provenance.restricted_ids(db, [r["id"] for r in items]) if admin_view else set()
