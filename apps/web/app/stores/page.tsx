@@ -45,6 +45,19 @@ const LANGUAGES: [string, string][] = [
   ["uk", "Ukrainian"], ["ar", "Arabic"], ["he", "Hebrew"], ["hi", "Hindi"], ["ja", "Japanese"], ["ko", "Korean"],
   ["zh", "Chinese"], ["id", "Indonesian"], ["ms", "Malay"], ["th", "Thai"], ["vi", "Vietnamese"],
 ];
+// Every ISO 3166 two-letter code the runtime can name, minus pseudo-regions (EU, UN, ZZ…), sorted by name.
+const NOT_COUNTRIES = new Set(["AC", "CP", "CQ", "DG", "EA", "EU", "EZ", "IC", "QO", "TA", "UN", "XA", "XB", "ZZ"]);
+const COUNTRIES: [string, string][] = (() => {
+  const names = new Intl.DisplayNames(["en"], { type: "region" });
+  const out: [string, string][] = [];
+  for (let a = 65; a <= 90; a++)
+    for (let b = 65; b <= 90; b++) {
+      const code = String.fromCharCode(a, b);
+      const name = names.of(code);
+      if (name && name !== code && !NOT_COUNTRIES.has(code)) out.push([code, name]);
+    }
+  return out.sort((x, y) => x[1].localeCompare(y[1]));
+})();
 const FORMATS: [string, string][] = [
   ["dropshipping", "Dropshipping (inferred)"], ["pod", "Print on demand (inferred)"],
   ["cod", "Cash on delivery (inferred)"], ["digital", "Digital products"],
@@ -106,16 +119,12 @@ export default async function Stores({ searchParams }: { searchParams: Promise<R
             <option key={a} value={a}>{a.replace("_", " ")}</option>
           ))}
         </select>
-        <input
-          name="country"
-          defaultValue={sp.country}
-          placeholder="Country code, e.g. US"
-          aria-label="Business country (2-letter code)"
-          pattern="[A-Za-z]{2}"
-          maxLength={2}
-          title="Two-letter country code, e.g. US, GB, CA"
-          className="rounded-md border border-slate-300 px-2 py-1.5 uppercase"
-        />
+        <select name="country" defaultValue={sp.country?.toUpperCase() ?? ""} aria-label="Business country" className="rounded-md border border-slate-300 px-2 py-1.5">
+          <option value="">Any country</option>
+          {COUNTRIES.map(([code, name]) => (
+            <option key={code} value={code}>{name}</option>
+          ))}
+        </select>
         <select name="signal" defaultValue={sp.signal ?? ""} aria-label="Signal" className="rounded-md border border-slate-300 px-2 py-1.5">
           <option value="">Any signal</option>
           {(types ?? []).map((t) => (
