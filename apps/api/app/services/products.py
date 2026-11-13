@@ -348,6 +348,12 @@ def update_location(store: Store, fetcher: SafeFetcher, base: str, robots, ua: s
     return loc is not None
 
 
+def observed_products(db: Session, store_id, limit: int = 500) -> list[dict]:
+    """Products we extracted from the store's own pages, shaped for catalog.classify."""
+    rows = db.execute(select(Product.title, Product.category).where(Product.store_id == store_id).limit(limit))
+    return [{"title": t or "", "product_type": c or ""} for t, c in rows]
+
+
 def extract_store(db: Session, store: Store, fetcher: SafeFetcher, max_pages: int, delay: float) -> ExtractStats:
     """One bounded pass over a store. Network errors on single pages are counted, not raised;
     an unreachable store raises FetchError so the task can retry later."""
@@ -361,7 +367,7 @@ def extract_store(db: Session, store: Store, fetcher: SafeFetcher, max_pages: in
     delay = max(delay, min(float(robots.crawl_delay(ua) or 0), 10.0))
     if store.primary_platform == "shopify":
         update_location(store, fetcher, base, robots, ua)
-    catalog.update_catalog(store, fetcher, base, robots, ua)  # language, product dates, formats, category
+    catalog.update_catalog(store, fetcher, base, robots, ua, observed_products(db, store.id))  # language, dates, formats, category
 
     urls = _sitemaps(fetcher, base, robots, host, stats)
     if len(urls) < max_pages and robots.can_fetch(ua, base):

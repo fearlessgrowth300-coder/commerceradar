@@ -93,3 +93,33 @@ def test_store_filters_and_categories_endpoint(client):
     assert client.get("/api/v1/exports/stores.csv", params={"format": "nft"}).status_code == 422
     header = client.get("/api/v1/exports/stores.csv", params={"limit": 1}).text.splitlines()[0]
     assert "language,category_group,category,formats,published_products,first_product_at,latest_product_at" in header
+
+
+def test_address_country_only_from_stated_two_letter_codes():
+    ld = lambda d: f'<script type="application/ld+json">{json.dumps(d)}</script>'  # noqa: E731
+    org = {"@type": "Organization", "address": {"@type": "PostalAddress", "addressCountry": "it"}}
+    assert catalog.address_country(ld(org)) == "IT"
+    assert catalog.address_country(ld({"@graph": [{"address": {"addressCountry": {"name": "DE"}}}]})) == "DE"
+    assert catalog.address_country(ld({"address": {"addressCountry": "United States"}})) is None  # names not mapped
+    two = ld({"address": {"addressCountry": "US"}}) + ld({"address": {"addressCountry": "GB"}})
+    assert catalog.address_country(two) is None  # ambiguous
+    assert catalog.address_country("<script type=application/ld+json>{bad</script>") is None
+
+
+def test_non_shopify_store_uses_observed_products_and_structured_country():
+    class Home(_Fetcher):
+        def fetch(self, url):
+            self.calls.append(url)
+            body = '<html lang="it"><script type="application/ld+json">{"address": {"addressCountry": "IT"}}</script>'
+            return SimpleNamespace(status=200, text=body, content_type="text/html")
+
+    st = _store("woocommerce")
+    st.business_country = st.location_source = None
+    observed = [{"title": "Scarpe running", "product_type": "Shoes"}] * 3
+    assert catalog.update_catalog(st, Home([]), "https://x.example/", _Robots(), "bot", observed) is True
+    assert (st.category_group, st.category) == ("Clothing & Shoes & Accessories", "Shoes")
+    assert (st.business_country, st.location_source) == ("IT", "structured_data")
+    assert st.published_products is None and st.first_product_at is None  # observed ≠ published catalog
+    st.business_country, st.location_source = "CA", "shopify_meta"
+    catalog.update_catalog(st, Home([]), "https://x.example/", _Robots(), "bot", observed)
+    assert st.business_country == "CA"  # Shopify's own setting wins

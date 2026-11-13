@@ -215,8 +215,43 @@ def shopify_products(fetcher: SafeFetcher, base: str, robots, ua: str, pages: in
     return out
 
 
-def update_catalog(store: Store, fetcher: SafeFetcher, base: str, robots, ua: str) -> bool:
-    """Refresh the store's catalog profile. One homepage request (+ /products.json pages for Shopify)."""
+_LD = re.compile(r'<script[^>]+type=["\']?application/ld\+json["\']?[^>]*>(.*?)</script>', re.I | re.S)
+
+
+def address_country(html: str) -> str | None:
+    """Country the store states in its own structured data (schema.org address.addressCountry), or None.
+    Only 2-letter codes count; several different countries on one page = ambiguous = None."""
+    # ponytail: full country names ("United States") are ignored; map them if many stores use names
+    found: set[str] = set()
+
+    def walk(x, depth=0):
+        if depth > 8:
+            return
+        if isinstance(x, list):
+            for y in x:
+                walk(y, depth + 1)
+        elif isinstance(x, dict):
+            c = x.get("addressCountry")
+            c = c.get("name") or c.get("identifier") if isinstance(c, dict) else c
+            if isinstance(c, str) and re.fullmatch(r"[A-Za-z]{2}", c.strip()):
+                found.add(c.strip().upper())
+            for v in x.values():
+                if isinstance(v, (dict, list)):
+                    walk(v, depth + 1)
+
+    for m in _LD.finditer(html or ""):
+        try:
+            walk(json.loads(m.group(1)))
+        except (ValueError, RecursionError):
+            continue
+    found.discard("XX")
+    return found.pop() if len(found) == 1 else None
+
+
+def update_catalog(store: Store, fetcher: SafeFetcher, base: str, robots, ua: str, observed: list[dict] | None = None) -> bool:
+    """Refresh the store's catalog profile. One homepage request (+ /products.json pages for Shopify).
+    `observed` = products we already extracted from the store's pages ({title, product_type}): category evidence
+    for stores without /products.json. Country from the homepage's structured address unless Shopify gave one."""
     html = ""
     if robots.can_fetch(ua, base):
         try:
@@ -234,7 +269,9 @@ def update_catalog(store: Store, fetcher: SafeFetcher, base: str, robots, ua: st
         store.published_products, store.first_product_at, store.latest_product_at = s["published_products"], s["first_product_at"], s["latest_product_at"]
     f = formats(html, products)
     store.is_pod, store.is_cod, store.is_dropshipping, store.is_digital = f["pod"], f["cod"], f["dropshipping"], f["digital"]
-    group, sub, conf = classify(store.store_name, products)
+    group, sub, conf = classify(store.store_name, products or observed or [])
     store.category_group, store.category, store.category_confidence = group, sub, conf or None
+    if html and getattr(store, "location_source", None) in (None, "structured_data") and (c := address_country(html)):
+        store.business_country, store.location_source = c, "structured_data"
     store.catalog_checked_at = datetime.now(UTC)
     return True
