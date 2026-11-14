@@ -19,7 +19,7 @@ depends_on = None
 JSONType = sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql")
 CONFIG = {
     "logs": ["https://ct.cloudflare.com/logs/nimbus2026/", "https://ct.cloudflare.com/logs/nimbus2027/"],
-    "match_cidrs": ["23.227.38.0/24"], "pages_per_batch": 4, "page_size": 1000, "dns_threads": 64,
+    "match_cidrs": ["23.227.38.0/24"], "pages_per_batch": 16, "page_size": 1000, "dns_threads": 64,
     "interval_seconds": 2, "verify_new_limit": 2000, "backlog_rank": 1, "schedule_hours": 0.25,
 }  # fmt: skip
 

@@ -96,7 +96,7 @@ class CertTransparency:
         logs = [u.rstrip("/") + "/" for u in config.get("logs") or []]
         if not logs:
             raise SourceError("config.logs is empty")
-        pages, page = int(config.get("pages_per_batch", 4)), int(config.get("page_size", 1000))
+        pages, page = int(config.get("pages_per_batch", 16)), int(config.get("page_size", 1000))
         positions = dict(state.get("positions") or {})
         entries, caught_up, notes = [], 0, []
         for log in logs:
@@ -106,20 +106,21 @@ class CertTransparency:
                     raise FetchError(f"get-sth HTTP {r.status} from {log}")
                 positions[log] = int(json.loads(r.text)["tree_size"])
             got = 0
-            for _ in range(pages):
+            for _ in range(pages):  # logs may return fewer than asked (Cloudflare: ≤256): short ≠ end
                 pos = positions[log]
                 r = ctx.fetcher.fetch(f"{log}ct/v1/get-entries?start={pos}&end={pos + page - 1}")
-                if r.status == 400:  # past the log's end: caught up
+                if r.status == 400:  # past the log's end
+                    caught_up += 1
                     break
                 if r.status != 200:
                     raise FetchError(f"get-entries HTTP {r.status} from {log}")
                 batch = json.loads(r.text).get("entries") or []
+                if not batch:
+                    caught_up += 1
+                    break
                 entries += batch
                 positions[log] = pos + len(batch)
                 got += len(batch)
-                if not batch:
-                    break
-            caught_up += got < pages * page
             notes.append(f"{log.split('/')[-2] or log}: +{got}")
         state["positions"] = positions  # new dict: JSON column change is detected
 
