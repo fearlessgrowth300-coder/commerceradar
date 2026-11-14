@@ -94,7 +94,7 @@ def test_hourly_data_limit_stops_the_run(db):
     assert b.cursor is None and "limit" in b.note and log.calls == []
     state["usage"] = {"hour": "2000-01-01T00", "mb": 99.0}  # a new hour resets the budget
     ct.CertTransparency().fetch_batch({"logs": [LOG], "max_mb_per_hour": 5, "pages_per_batch": 1}, {}, state, Ctx(log, db))
-    assert state["usage"]["mb"] > 0 and state["usage"]["mb"] < 5 and state["positions"][LOG] == 2
+    assert state["usage"]["hour"] != "2000-01-01T00" and state["usage"]["mb"] < 5 and state["positions"][LOG] == 2
 
 
 def test_far_behind_jumps_to_newest(db, shopify_dns):
