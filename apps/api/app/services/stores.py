@@ -100,7 +100,7 @@ def list_stores(
             .exists()
         )
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    if sort == "products":  # needs every store's count: one grouped pass over products, not one count per store
+    if sort == "products" or page_size > 1000:  # every/many stores' counts: one grouped pass beats a count per store
         counts = (select(Product.store_id, func.count().label("n")).where(Product.status == "active")
                   .group_by(Product.store_id).subquery())  # fmt: skip
         n = func.coalesce(counts.c.n, 0)
