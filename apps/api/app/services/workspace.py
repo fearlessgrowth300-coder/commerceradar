@@ -173,7 +173,7 @@ def export_csv(db: Session, org: Organization, filters: dict, unlimited: bool = 
     ids: list[uuid.UUID] = []
     while pos < end:  # big pages: every page re-runs the grouped query, so fewer pages = much faster
         # first page can be exactly as big as needed (offset 0); later pages keep `size` so offsets line up
-        rows, _ = stores.list_stores(db, **kw, page=page, page_size=min(size, end) if page == 1 else size)
+        rows, _ = stores.list_stores(db, **kw, page=page, page_size=min(size, end) if page == 1 else size, with_total=False)
         for st, dom, n in rows[: end - pos]:
             w.writerow([dom] if domains_only else [
                 dom, _safe(st.store_name), st.primary_platform, st.platform_confidence, st.ecommerce_status,

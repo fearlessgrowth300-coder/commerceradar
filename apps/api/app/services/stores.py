@@ -45,6 +45,7 @@ def list_stores(
     first_product_to: datetime | None = None,
     latest_product_from: datetime | None = None,
     latest_product_to: datetime | None = None,
+    with_total: bool = True,  # exports already know the total: skip re-counting every match per page
 ):
     # Products are counted per returned store (correlated subquery on products.store_id), not joined and grouped:
     # the join aggregated every product of every store (2.6 M rows) just to show one page.
@@ -99,7 +100,7 @@ def list_stores(
             .where(StoreSignal.store_id == Store.id, StoreSignal.signal_type == signal, StoreSignal.active.is_(True))
             .exists()
         )
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    total = (db.scalar(select(func.count()).select_from(stmt.subquery())) or 0) if with_total else None
     if sort == "products" or page_size > 1000:  # every/many stores' counts: one grouped pass beats a count per store
         counts = (select(Product.store_id, func.count().label("n")).where(Product.status == "active")
                   .group_by(Product.store_id).subquery())  # fmt: skip
