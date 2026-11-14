@@ -70,6 +70,10 @@ services:
     build: ./apps/api
     init: true
     command: celery -A app.worker worker -Q verification --pool threads --concurrency=${VERIFIER_THREADS:-12} --loglevel=info --hostname=verifier@%h
+    # 3 x 12 threads (2026-11-14): CT source supplies ~10k Shopify names/h; one verifier + 2000/tick capped us at ~12k checks/h.
+    # Each replica holds up to 15 DB connections (Postgres max_connections=100).
+    deploy:
+      replicas: ${VERIFIER_REPLICAS:-3}
     environment: *api-env
     volumes: [./apps/api:/app]
     stop_grace_period: 60s
