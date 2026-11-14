@@ -145,6 +145,10 @@ def test_store_directory_filters_and_detail(db, client):
     assert str(a.id) in recent and str(b.id) not in recent
     row = next(r for r in client.get("/api/v1/stores", params={"q": "alpha gear"}).json()["items"])
     assert row["product_count"] == 3
+    by_products = client.get("/api/v1/stores", params={"sort": "products", "page_size": 200}).json()["items"]
+    counts = [r["product_count"] for r in by_products]
+    assert counts == sorted(counts, reverse=True) and counts[0] >= 3
+    assert next(r for r in by_products if r["id"] == str(b.id))["product_count"] == 0  # stores without products still listed
     for bad in ({"platform": "nope"}, {"activity": "dead"}, {"signal": "rich"}, {"sort": "revenue"}):
         assert client.get("/api/v1/stores", params=bad).status_code == 422
 

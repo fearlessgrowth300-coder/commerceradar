@@ -16,7 +16,7 @@ SORTS = {
     "oldest": (Store.first_verified_at.asc().nulls_last(),),
     "last_verified": (Store.last_verified_at.desc().nulls_last(),),
     "name": (func.lower(func.coalesce(Store.store_name, Domain.normalized_domain)).asc(),),
-    "products": (func.coalesce(func.count(Product.id), 0).desc(),),
+    "products": (),  # ordered by the per-store product count, see list_stores
     "latest_product": (Store.latest_product_at.desc().nulls_last(),),
     "store_created": (Store.first_product_at.desc().nulls_last(),),
 }
@@ -46,13 +46,14 @@ def list_stores(
     latest_product_from: datetime | None = None,
     latest_product_to: datetime | None = None,
 ):
-    products = func.count(Product.id).label("product_count")
+    # Products are counted per returned store (correlated subquery on products.store_id), not joined and grouped:
+    # the join aggregated every product of every store (2.6 M rows) just to show one page.
+    products = (select(func.count(Product.id)).where(Product.store_id == Store.id, Product.status == "active")
+                .correlate(Store).scalar_subquery())  # fmt: skip
     stmt = (
-        select(Store, Domain.normalized_domain, products)
+        select(Store, Domain.normalized_domain)
         .join(Domain, Domain.id == Store.domain_id)
-        .outerjoin(Product, (Product.store_id == Store.id) & (Product.status == "active"))
         .where(Domain.suppressed_at.is_(None), Store.merged_into_store_id.is_(None))
-        .group_by(Store.id, Domain.normalized_domain)
     )
     if not include_restricted:
         stmt = stmt.where(~provenance.restricted_store_clause())
@@ -99,7 +100,9 @@ def list_stores(
             .exists()
         )
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    rows = db.execute(stmt.order_by(*SORTS[sort], Store.id).offset((page - 1) * page_size).limit(page_size)).all()
+    order = (products.desc(),) if sort == "products" else SORTS[sort]  # products sort still counts every match: slower
+    page_q = stmt.add_columns(products.label("product_count")).order_by(*order, Store.id)
+    rows = db.execute(page_q.offset((page - 1) * page_size).limit(page_size)).all()
     return rows, total
 
 
