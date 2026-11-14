@@ -74,6 +74,8 @@ services:
     # Each replica holds up to 15 DB connections (Postgres max_connections=100).
     deploy:
       replicas: ${VERIFIER_REPLICAS:-3}
+    # 2 vCPU box: background checks yield CPU to api/postgres (dashboard went 4 s -> 23 s without this; 3.8 s with it)
+    cpu_shares: 256
     environment: *api-env
     volumes: [./apps/api:/app]
     stop_grace_period: 60s
@@ -93,6 +95,7 @@ services:
     build: ./apps/api
     init: true
     command: celery -A app.worker worker -Q products --pool threads --concurrency=${PRODUCER_THREADS:-12} --loglevel=info --hostname=producer@%h
+    cpu_shares: 256  # background work yields CPU to api/postgres
     environment: *api-env
     volumes: [./apps/api:/app]
     stop_grace_period: 60s
