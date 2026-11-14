@@ -83,3 +83,22 @@ def test_full_pages_continue_the_run(db, shopify_dns):
 def test_requires_logs(db):
     with pytest.raises(SourceError):
         ct.CertTransparency().fetch_batch({}, {}, {}, Ctx(FakeLog(0, []), db))
+
+
+def test_hourly_data_limit_stops_the_run(db):
+    from datetime import UTC, datetime
+
+    log = FakeLog(size=0, entries=[x509_entry("newstore.com")] * 10)
+    state = {"positions": {LOG: 0}, "usage": {"hour": datetime.now(UTC).strftime("%Y-%m-%dT%H"), "mb": 5.0}}
+    b = ct.CertTransparency().fetch_batch({"logs": [LOG], "max_mb_per_hour": 5}, {}, state, Ctx(log, db))
+    assert b.cursor is None and "limit" in b.note and log.calls == []
+    state["usage"] = {"hour": "2000-01-01T00", "mb": 99.0}  # a new hour resets the budget
+    ct.CertTransparency().fetch_batch({"logs": [LOG], "max_mb_per_hour": 5, "pages_per_batch": 1}, {}, state, Ctx(log, db))
+    assert state["usage"]["mb"] > 0 and state["usage"]["mb"] < 5 and state["positions"][LOG] == 2
+
+
+def test_far_behind_jumps_to_newest(db, shopify_dns):
+    log = FakeLog(size=100, entries=[x509_entry("old.com")] * 100 + [x509_entry("newstore.com")])
+    state = {"positions": {LOG: 0}}
+    b = ct.CertTransparency().fetch_batch({"logs": [LOG], "max_lag": 10}, {}, state, Ctx(log, db))
+    assert "skipped 100" in b.note and [f.url for f in b.found] == ["https://newstore.com/"]

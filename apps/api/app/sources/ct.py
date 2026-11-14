@@ -98,13 +98,24 @@ class CertTransparency:
             raise SourceError("config.logs is empty")
         pages, page = int(config.get("pages_per_batch", 16)), int(config.get("page_size", 1000))
         positions = dict(state.get("positions") or {})
+        hour = datetime.now(UTC).strftime("%Y-%m-%dT%H")
+        usage = dict(state.get("usage") or {})
+        if usage.get("hour") != hour:
+            usage = {"hour": hour, "mb": 0.0}
+        cap, max_lag = config.get("max_mb_per_hour"), int(config.get("max_lag", 200_000))
+        if cap and usage["mb"] >= float(cap):  # bandwidth budget for this hour used: stop; next run after the hour
+            return Batch([], None, f"hourly data limit ({cap} MB) reached")
         entries, caught_up, notes = [], 0, []
         for log in logs:
+            r = ctx.fetcher.fetch(log + "ct/v1/get-sth")
+            if r.status != 200:
+                raise FetchError(f"get-sth HTTP {r.status} from {log}")
+            head = int(json.loads(r.text)["tree_size"])
+            skipped = 0
             if log not in positions:  # first time: start at the end, don't replay history
-                r = ctx.fetcher.fetch(log + "ct/v1/get-sth")
-                if r.status != 200:
-                    raise FetchError(f"get-sth HTTP {r.status} from {log}")
-                positions[log] = int(json.loads(r.text)["tree_size"])
+                positions[log] = head
+            elif head - positions[log] > max_lag:  # too far behind (log grows faster than our budget): jump to newest
+                skipped, positions[log] = head - positions[log], head
             got = 0
             for _ in range(pages):  # logs may return fewer than asked (Cloudflare: ≤256): short ≠ end
                 pos = positions[log]
@@ -114,6 +125,7 @@ class CertTransparency:
                     break
                 if r.status != 200:
                     raise FetchError(f"get-entries HTTP {r.status} from {log}")
+                usage["mb"] = round(usage["mb"] + len(r.text) / 1e6, 1)
                 batch = json.loads(r.text).get("entries") or []
                 if not batch:
                     caught_up += 1
@@ -121,8 +133,8 @@ class CertTransparency:
                 entries += batch
                 positions[log] = pos + len(batch)
                 got += len(batch)
-            notes.append(f"{log.split('/')[-2] or log}: +{got}")
-        state["positions"] = positions  # new dict: JSON column change is detected
+            notes.append(f"{log.split('/')[-2] or log}: +{got}" + (f" (skipped {skipped} to stay current)" if skipped else ""))
+        state["positions"], state["usage"] = positions, usage  # new dicts: JSON column change is detected
 
         names = domains_of(entries)
         known: set[str] = set()
@@ -132,6 +144,6 @@ class CertTransparency:
         hits = matching(fresh, config.get("match_cidrs") or SHOPIFY, int(config.get("dns_threads", 64)))
         now = datetime.now(UTC)
         found = [Found(url=f"https://{n}/", seen_at=now, ref=f"ct:{ip}") for n, ip in hits]
-        note = f"{', '.join(notes)} entries; {len(names)} domains, {len(fresh)} new, {len(hits)} match"
+        note = f"{', '.join(notes)} entries; {len(names)} domains, {len(fresh)} new, {len(hits)} match; {usage['mb']} MB this hour"
         done = caught_up == len(logs)
         return Batch(found, None if done else {"n": int(cursor.get("n", 0)) + 1}, note + ("; caught up" if done else ""))
