@@ -62,10 +62,11 @@ def get_ok(fetcher: SafeFetcher, url: str, headers: dict[str, str] | None = None
 
 
 def registry() -> dict[str, Source]:
-    from app.sources import commoncrawl, crawler, crtsh, czds, urlscan
+    from app.sources import commoncrawl, crawler, crtsh, ct, czds, urlscan
 
     return {
         "commoncrawl": commoncrawl.CommonCrawl(),
+        "ct": ct.CertTransparency(),
         "crtsh": crtsh.CrtSh(),
         "czds": czds.Czds(),
         "crawler": crawler.LinkCrawler(),
