@@ -100,8 +100,13 @@ def list_stores(
             .exists()
         )
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    order = (products.desc(),) if sort == "products" else SORTS[sort]  # products sort still counts every match: slower
-    page_q = stmt.add_columns(products.label("product_count")).order_by(*order, Store.id)
+    if sort == "products":  # needs every store's count: one grouped pass over products, not one count per store
+        counts = (select(Product.store_id, func.count().label("n")).where(Product.status == "active")
+                  .group_by(Product.store_id).subquery())  # fmt: skip
+        n = func.coalesce(counts.c.n, 0)
+        page_q = stmt.outerjoin(counts, counts.c.store_id == Store.id).add_columns(n.label("product_count")).order_by(n.desc(), Store.id)
+    else:
+        page_q = stmt.add_columns(products.label("product_count")).order_by(*SORTS[sort], Store.id)
     rows = db.execute(page_q.offset((page - 1) * page_size).limit(page_size)).all()
     return rows, total
 
