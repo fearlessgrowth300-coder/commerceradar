@@ -91,7 +91,11 @@ def test_backlog_budget_adapts_to_queue_depth(db, monkeypatch):
     def tick():
         return monitoring.tick(db, datetime.now(UTC), lambda j: None, lambda j: None, lambda r, s: None)
 
-    in_flight = db.scalar(select(func.count()).select_from(CrawlJob).where(CrawlJob.status.in_(IN_FLIGHT)))
+    in_flight = db.scalar(select(func.count()).select_from(CrawlJob).where(CrawlJob.status.in_(IN_FLIGHT), CrawlJob.job_type == "verify"))
+    other = domain(db, verification_status="confirmed_ecommerce")
+    for _ in range(5):  # a product-scan backlog must not eat the verification budget
+        db.add(CrawlJob(domain_id=other.id, target_domain=other.normalized_domain, job_type="products", status="queued"))
+    db.commit()
     monkeypatch.setattr(settings, "monitor_max_in_flight", in_flight)  # queue already "full"
     assert tick()["backlog_verifications"] == 0
     monkeypatch.setattr(settings, "monitor_max_in_flight", in_flight + 2)

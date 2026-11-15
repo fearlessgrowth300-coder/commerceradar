@@ -194,7 +194,9 @@ def tick(
 
     # 2. never-verified candidates (oldest first). Adaptive: top the queue up to monitor_max_in_flight
     #    instead of a fixed quota — measured on the VPS, the fixed quota (not the worker) was the bottleneck.
-    in_flight = db.scalar(select(func.count()).select_from(CrawlJob).where(CrawlJob.status.in_(IN_FLIGHT))) or 0
+    # verification jobs only: a product-scan backlog (separate queue/service) throttled checks to ~300/tick (2026-11-15)
+    in_flight = db.scalar(select(func.count()).select_from(CrawlJob)
+                          .where(CrawlJob.status.in_(IN_FLIGHT), CrawlJob.job_type == "verify")) or 0  # fmt: skip
     budget = min(s.monitor_backlog_per_tick, max(0, s.monitor_max_in_flight - in_flight))
     any_verify = exists().where(CrawlJob.domain_id == Domain.id, CrawlJob.job_type == "verify")
     backlog = db.execute(
