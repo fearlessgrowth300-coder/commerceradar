@@ -96,6 +96,10 @@ services:
     init: true
     command: celery -A app.worker worker -Q products --pool threads --concurrency=${PRODUCER_THREADS:-12} --loglevel=info --hostname=producer@%h
     cpu_shares: 256  # background work yields CPU to api/postgres
+    # 3 replicas (2026-11-15): one scanner ~1.7k stores/h vs 5k+ new stores/h. Each holds up to ~12-15 DB
+    # connections (threads sleep between pages holding one); watch pg_stat_activity vs max_connections=100.
+    deploy:
+      replicas: ${PRODUCER_REPLICAS:-3}
     environment: *api-env
     volumes: [./apps/api:/app]
     stop_grace_period: 60s
