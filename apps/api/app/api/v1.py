@@ -339,6 +339,7 @@ class StoreRow(BaseModel):
     first_product_at: datetime | None = None
     latest_product_at: datetime | None = None
     restricted: bool = False
+    downloaded: bool = False  # your organization already downloaded this store in a CSV
 
 
 class StorePage(BaseModel):
@@ -487,6 +488,7 @@ def list_stores(
     ecommerce_status: str | None = Query(None, pattern="^(confirmed_ecommerce|probable_ecommerce)$"),
     signal: str | None = Query(None),
     new_only: bool = Query(False, description="skip stores your organization already downloaded"),
+    downloaded: str | None = Query(None, pattern="^(yes|no)$", description="yes = only stores you downloaded, no = only ones you didn't"),
     language: str | None = Query(None, pattern="^[A-Za-z]{2}$"),
     category: str | None = Query(None, max_length=60),
     format: str | None = Query(None, pattern="^(pod|cod|dropshipping|digital)$"),
@@ -506,14 +508,17 @@ def list_stores(
     rows, total = stores.list_stores(
         db, q=q, platform=platform, activity=activity, country=country, ecommerce_status=ecommerce_status, signal=signal,
         verified_from=verified_from, verified_to=verified_to, sort=sort, page=page, page_size=page_size,
-        include_restricted=admin_view, not_exported_by=ctx.org.id if new_only else None,
+        include_restricted=admin_view, not_exported_by=ctx.org.id if (new_only or downloaded == "no") else None,
+        exported_by=ctx.org.id if downloaded == "yes" else None,
         language=language, category=category, format=format, first_product_from=first_product_from,
         first_product_to=first_product_to, latest_product_from=latest_product_from, latest_product_to=latest_product_to,
     )  # fmt: skip
     items = _store_rows(rows)
     flagged = provenance.restricted_ids(db, [r["id"] for r in items]) if admin_view else set()
+    mine = workspace.exported_ids(db, ctx.org.id, [r["id"] for r in items])
     for r in items:
         r["restricted"] = r["id"] in flagged
+        r["downloaded"] = r["id"] in mine
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 

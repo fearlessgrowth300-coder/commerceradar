@@ -38,6 +38,7 @@ def list_stores(
     page_size: int = 50,
     include_restricted: bool = False,
     not_exported_by: uuid.UUID | None = None,  # organization id: skip stores it already downloaded
+    exported_by: uuid.UUID | None = None,  # organization id: only stores it already downloaded
     language: str | None = None,
     category: str | None = None,  # a group ("Pet Supplies") or a subcategory ("Pet Toys")
     format: str | None = None,  # pod | cod | dropshipping | digital
@@ -70,12 +71,10 @@ def list_stores(
         stmt = stmt.where(Store.activity_status == activity)
     if country:
         stmt = stmt.where(Store.business_country == country.upper())
-    if not_exported_by:
-        stmt = stmt.where(
-            ~select(ExportedStore.id)
-            .where(ExportedStore.organization_id == not_exported_by, ExportedStore.store_id == Store.id)
-            .exists()
-        )
+    for org_id, want in ((not_exported_by, False), (exported_by, True)):
+        if org_id:
+            done = select(ExportedStore.id).where(ExportedStore.organization_id == org_id, ExportedStore.store_id == Store.id).exists()
+            stmt = stmt.where(done if want else ~done)
     if language:
         stmt = stmt.where(Store.language == language.lower())
     if category:

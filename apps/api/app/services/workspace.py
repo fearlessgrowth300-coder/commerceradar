@@ -18,7 +18,8 @@ from app.models import (Alert, AuthSession, CrawlJob, Domain, ExportedStore, Mem
 from app.services import billing, stores
 
 DATE_KEYS = ("verified_from", "verified_to", "first_product_from", "first_product_to", "latest_product_from", "latest_product_to")
-FILTER_KEYS = ("q", "platform", "activity", "country", "language", "category", "format", "ecommerce_status", "signal", *DATE_KEYS, "sort")
+FILTER_KEYS = ("q", "platform", "activity", "country", "language", "category", "format", "ecommerce_status", "signal", "downloaded",
+               *DATE_KEYS, "sort")  # fmt: skip
 EXPORT_COLUMNS = ("domain", "store_name", "primary_platform", "platform_confidence", "ecommerce_status", "activity_status",
                   "business_country", "language", "category_group", "category", "formats", "published_products",
                   "first_product_at", "latest_product_at", "first_verified_at", "last_verified_at", "products_observed")  # fmt: skip
@@ -43,14 +44,26 @@ def clean_filters(raw: dict) -> dict:
     out = {k: str(v)[:253] for k, v in (raw or {}).items() if k in FILTER_KEYS and v not in (None, "")}
     if out.get("format") and out["format"] not in FORMATS:
         raise ValueError(f"format must be one of {', '.join(FORMATS)}")
+    if out.get("downloaded") and out["downloaded"] not in ("yes", "no"):
+        raise ValueError("downloaded must be yes or no")
     for k in DATE_KEYS:
         if k in out:
             out[k] = datetime.fromisoformat(out[k]).isoformat()  # ValueError → 422 upstream
     return out
 
 
-def _query_kwargs(filters: dict) -> dict:
-    kw = {k: v for k, v in filters.items() if k not in DATE_KEYS}
+def exported_ids(db: Session, org_id: uuid.UUID, store_ids: list) -> set:
+    """Which of these stores this organization already downloaded."""
+    if not store_ids:
+        return set()
+    return set(db.scalars(select(ExportedStore.store_id).where(ExportedStore.organization_id == org_id,
+                                                                ExportedStore.store_id.in_(store_ids))))  # fmt: skip
+
+
+def _query_kwargs(filters: dict, org_id: uuid.UUID | None = None) -> dict:
+    kw = {k: v for k, v in filters.items() if k not in DATE_KEYS and k != "downloaded"}
+    if org_id and filters.get("downloaded") in ("yes", "no"):
+        kw["exported_by" if filters["downloaded"] == "yes" else "not_exported_by"] = org_id
     for k in DATE_KEYS:
         if k in filters:
             dt = datetime.fromisoformat(filters[k])
@@ -94,7 +107,7 @@ def run_alerts(db: Session, now: datetime, limit_per_search: int = 200) -> int:
             continue
         since = s.last_alert_check_at or s.created_at
         since = since if since.tzinfo else since.replace(tzinfo=UTC)
-        kw = _query_kwargs(s.filters or {})
+        kw = _query_kwargs(s.filters or {}, s.organization_id)
         kw["verified_from"] = max(kw.get("verified_from") or since, since)
         kw.pop("sort", None)
         rows, _ = stores.list_stores(db, **kw, sort="newest", page=1, page_size=limit_per_search)
@@ -150,8 +163,9 @@ def export_csv(db: Session, org: Organization, filters: dict, unlimited: bool = 
     `part=k` = only the k-th file of PART_ROWS rows (for downloads too big for one file);
     `new_only=1` = skip stores this organization already downloaded. Every downloaded store is recorded."""
     filters = filters or {}
-    kw = _query_kwargs(clean_filters(filters))
+    kw = _query_kwargs(clean_filters(filters), org.id)
     new_only = str(filters.get("new_only") or "").lower() in ("1", "true", "on", "yes")
+    new_only = new_only and filters.get("downloaded") != "yes"  # re-downloading your downloaded stores on purpose
     if new_only:
         kw["not_exported_by"] = org.id
     _, total = stores.list_stores(db, **kw, page=1, page_size=1)

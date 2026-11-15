@@ -326,6 +326,26 @@ def test_new_only_downloads_never_repeat_a_store(db, client, monkeypatch):
     assert len(get()) == 5  # without the box ticked, everything is still available
     assert client.get("/api/v1/stores", params={"q": tag, "new_only": True}).json()["total"] == 0
 
+
+def test_downloaded_filter_and_flag(db, client):
+    tag = uuid.uuid4().hex[:6]
+    for i in range(3):
+        make_store(db, host=f"dl{i}{tag}.example", primary_platform="shopify")
+    got = client.get("/api/v1/exports/stores.csv", params={"q": tag, "columns": "domains", "new_only": 1, "limit": 1}).text.splitlines()[1:]
+    rows = client.get("/api/v1/stores", params={"q": tag}).json()["items"]
+    assert [r["domain"] for r in rows if r["downloaded"]] == got
+    yes = client.get("/api/v1/stores", params={"q": tag, "downloaded": "yes"}).json()
+    no = client.get("/api/v1/stores", params={"q": tag, "downloaded": "no"}).json()
+    assert (yes["total"], no["total"]) == (1, 2) and yes["items"][0]["domain"] == got[0]
+    # re-download only what you downloaded, even with "skip downloaded" ticked
+    again = client.get("/api/v1/exports/stores.csv", params={"q": tag, "columns": "domains", "downloaded": "yes", "new_only": 1}).text.splitlines()[1:]
+    assert again == got
+    assert client.get("/api/v1/stores", params={"downloaded": "maybe"}).status_code == 422
+
+
+def test_new_only_parts_never_repeat(db, client, monkeypatch):
+    from app.services import workspace
+
     monkeypatch.setattr(workspace, "PART_ROWS", {"domains": 2, "full": 2})
     tag2 = uuid.uuid4().hex[:6]
     for i in range(5):

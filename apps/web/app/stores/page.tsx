@@ -23,6 +23,7 @@ type Row = {
   published_products: number | null;
   first_product_at: string | null;
   latest_product_at: string | null;
+  downloaded?: boolean;
 };
 type Category = { group: string; subcategories: string[] };
 type Page = { items: Row[]; total: number; page: number; page_size: number };
@@ -64,7 +65,7 @@ const FORMATS: [string, string][] = [
 ];
 const FORMAT_SHORT: Record<string, string> = { dropshipping: "Dropship", pod: "POD", cod: "COD", digital: "Digital" };
 const FILTERS = [
-  "q", "platform", "activity", "country", "language", "category", "format", "signal", "verified_from", "verified_to",
+  "q", "platform", "activity", "country", "language", "category", "format", "signal", "downloaded", "verified_from", "verified_to",
   "first_product_from", "first_product_to", "latest_product_from", "latest_product_to", "sort",
 ] as const;
 
@@ -124,6 +125,11 @@ export default async function Stores({ searchParams }: { searchParams: Promise<R
           {COUNTRIES.map(([code, name]) => (
             <option key={code} value={code}>{name}</option>
           ))}
+        </select>
+        <select name="downloaded" defaultValue={sp.downloaded ?? ""} aria-label="Download status" className="rounded-md border border-slate-300 px-2 py-1.5">
+          <option value="">Downloaded or not</option>
+          <option value="no">Not downloaded yet</option>
+          <option value="yes">Already downloaded</option>
         </select>
         <select name="signal" defaultValue={sp.signal ?? ""} aria-label="Signal" className="rounded-md border border-slate-300 px-2 py-1.5">
           <option value="">Any signal</option>
@@ -250,6 +256,11 @@ export default async function Stores({ searchParams }: { searchParams: Promise<R
                   <tr key={s.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-3 py-2">
                       <Link href={`/stores/${s.id}`} className="font-medium hover:underline">{s.domain}</Link>
+                      {s.downloaded && (
+                        <span title="Your team already downloaded this store in a CSV" className="ml-2 rounded bg-emerald-50 px-1.5 py-0.5 text-xs text-emerald-700">
+                          ✓ Downloaded
+                        </span>
+                      )}
                       {s.store_name && <div className="max-w-xs truncate text-xs text-slate-500">{s.store_name}</div>}
                     </td>
                     <td className="px-3 py-2">{PLATFORM_LABEL[s.primary_platform] ?? s.primary_platform}</td>
