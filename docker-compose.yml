@@ -56,7 +56,7 @@ services:
       redis: { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.worker inspect ping -d celery@$$HOSTNAME --timeout 5"]
-      interval: 60s
+      interval: 300s  # each ping starts a full Python process: costly on 2 vCPU (2026-11-16)
       timeout: 30s
       retries: 3
 
@@ -84,7 +84,7 @@ services:
       redis: { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.worker inspect ping -d verifier@$$HOSTNAME --timeout 5"]
-      interval: 60s
+      interval: 300s
       timeout: 30s
       retries: 3
 
@@ -108,7 +108,7 @@ services:
       redis: { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.worker inspect ping -d producer@$$HOSTNAME --timeout 5"]
-      interval: 60s
+      interval: 300s
       timeout: 30s
       retries: 3
 
