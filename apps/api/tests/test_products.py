@@ -194,6 +194,15 @@ def test_page_budget_is_respected(db):
     assert stats.fetched == 3 and sum(p.startswith("/products/") for p in site.fetched) == 3
 
 
+def test_light_scan_reads_profile_only(db):
+    host = f"l{uuid.uuid4().hex[:8]}.example"
+    store = make_store(db, host)
+    site = Site(host)
+    stats = products.extract_store(db, store, site.fetcher(), max_pages=0, delay=0)
+    assert stats.fetched == 0 and store.catalog_checked_at is not None
+    assert not any("sitemap" in p or p.startswith("/products/") for p in site.fetched)
+
+
 # ---------- task + API ----------
 
 

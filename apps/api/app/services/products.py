@@ -369,7 +369,8 @@ def extract_store(db: Session, store: Store, fetcher: SafeFetcher, max_pages: in
         update_location(store, fetcher, base, robots, ua)
     catalog.update_catalog(store, fetcher, base, robots, ua, observed_products(db, store.id))  # language, dates, formats, category
 
-    urls = _sitemaps(fetcher, base, robots, host, stats)
+    # max_pages=0 = light scan: profile only (homepage, /meta.json, /products.json), no sitemaps or product pages
+    urls = _sitemaps(fetcher, base, robots, host, stats) if max_pages > 0 else []
     if len(urls) < max_pages and robots.can_fetch(ua, base):
         try:
             home = fetcher.fetch(base)
